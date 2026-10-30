@@ -1,0 +1,40 @@
+@import "@anim/ui/theme.css";
+@import "dockview-react/dist/styles/dockview.css";
+@source "./";
+@source "../../../packages/ui/src";
+
+/* dockview themed with our tokens */
+.anim-dock {
+  --dv-group-view-background-color: var(--bg-panel);
+  --dv-tabs-and-actions-container-background-color: var(--bg-panel);
+  --dv-tabs-and-actions-container-height: var(--panel-header-h);
+  --dv-tabs-and-actions-container-font-size: var(--text-sm);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-panel);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-1);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-3);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-2);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-3);
+  --dv-tab-divider-color: transparent;
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-sash-color: var(--border);
+  --dv-active-sash-color: var(--accent);
+  --dv-drag-over-background-color: var(--accent-soft);
+  --dv-drag-over-border-color: var(--accent);
+  --dv-icon-hover-background-color: var(--bg-hover);
+  --dv-floating-box-shadow: var(--shadow-float);
+  --dv-floating-border: 1px solid var(--border-strong);
+  --dv-border-radius: var(--radius-md);
+  --dv-tabs-container-scrollbar-color: var(--bg-hover);
+  --dv-background-color: var(--bg-app);
+  background: var(--bg-app);
+  font-family: var(--font-ui);
+}
+.anim-dock .dv-tabs-and-actions-container { border-bottom: 1px solid var(--border); }
+.anim-dock .dv-tab { padding: 0 var(--space-3); font-weight: var(--weight-strong); }
+.anim-dock .dv-tab.dv-active-tab { box-shadow: inset 0 -2px 0 var(--accent); }
+/* dockers are re-arranged, not closed (View > Reset panel layout restores them) */
+.anim-dock .dv-default-tab-action { display: none !important; }

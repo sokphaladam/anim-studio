@@ -1,0 +1,78 @@
+/* The single source of every UI color, size, radius, shadow, font and duration. */
+:root {
+  color-scheme: dark;
+
+  --bg-app: #16151a;
+  --bg-panel: #1e1d23;
+  --bg-raised: #28272e;
+  --bg-hover: #32313a;
+  --canvas-surround: #0e0e11;
+  --border: #2d2c33;
+  --border-strong: #44424c;
+  --text-1: #ecebef;
+  --text-2: #a8a5b1;
+  --text-3: #72707b;
+  --accent: #f2a93b;
+  --accent-hover: #ffbd5a;
+  --accent-ink: #1a1206;
+  --accent-soft: rgba(242, 169, 59, 0.16);
+  --select: #4c8dff;
+  --onion-before: #ff5d6c;
+  --onion-after: #3ccf91;
+  --danger: #ff5d6c;
+  --success: #3ccf91;
+  --warning: #f2c94c;
+  --scrim: rgba(8, 8, 10, 0.6);
+  --grid-line: rgba(255, 255, 255, 0.04);
+  --grid-line-strong: rgba(255, 255, 255, 0.09);
+
+  --font-ui: "Geist Sans", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --text-micro: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-title: 15px;
+  --text-dialog: 20px;
+  --text-hero: 28px;
+  --weight-regular: 400;
+  --weight-strong: 600;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --menu-h: 32px;
+  --options-h: 36px;
+  --panel-header-h: 32px;
+  --tool-btn: 36px;
+  --tool-icon: 20px;
+  --panel-icon: 16px;
+  --row-h: 28px;
+  --ruler-h: 22px;
+  --beats-h: 20px;
+  --layer-label-w: 160px;
+  --frame-min: 12px;
+  --frame-max: 24px;
+  --toolbox-w: 44px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.5);
+
+  --dur-fast: 120ms;
+  --dur-panel: 180ms;
+  --dur-dialog: 220ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-panel: 0ms;
+    --dur-dialog: 0ms;
+  }
+}

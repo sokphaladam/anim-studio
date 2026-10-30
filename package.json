@@ -1,0 +1,32 @@
+{
+  "name": "anim-studio",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @anim/web --filter @anim/server dev",
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "storybook": "pnpm --filter @anim/ui storybook",
+    "screenshots": "node scripts/screenshots.mjs",
+    "compare": "node scripts/compare-reference.mjs",
+    "e2e:flipbook": "node scripts/flipbook-e2e.mjs",
+    "generate": "pnpm --filter @anim/server exec tsx src/cli.ts",
+    "e2e:generate": "node scripts/generate-e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "playwright": "^1.64.1",
+    "prettier": "^3.9.10",
+    "typescript": "^5",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  },
+  "type": "module"
+}

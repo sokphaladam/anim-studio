@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Autumn Window — 12s animation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Figtree:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#ebe5ee; --surface:#f8f5f9; --ink:#2b2130; --muted:#6c5f70; --line:#d4cad8;
+  --accent:#b8561f; --accent-ink:#fff; --code-bg:#f1ecf3;
+  color-scheme: light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1e1720; --surface:#2a2030; --ink:#f1e7ea; --muted:#b3a3b4; --line:#3d3142;
+    --accent:#f0a14a; --accent-ink:#1e1720; --code-bg:#251c2a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1e1720; --surface:#2a2030; --ink:#f1e7ea; --muted:#b3a3b4; --line:#3d3142;
+  --accent:#f0a14a; --accent-ink:#1e1720; --code-bg:#251c2a;
+  color-scheme: dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Figtree,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+main{max-width:1120px;margin:0 auto;padding:28px 20px 48px}
+h1{font-family:Fraunces,Georgia,"Times New Roman",serif;font-weight:400;font-size:clamp(28px,4.4vw,44px);line-height:1.1;margin:0 0 6px;letter-spacing:-.01em}
+.lede{color:var(--muted);margin:0 0 20px;max-width:62ch}
+.stage{position:relative;width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:#140e14;box-shadow:0 18px 50px -24px rgba(40,10,30,.55)}
+canvas{display:block;width:100%;height:100%}
+.controls{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+button{font:600 15px Figtree,system-ui,sans-serif;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 16px;border-radius:999px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);min-width:92px}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+input[type=range]{flex:1;min-width:160px;accent-color:var(--accent)}
+.time{font-variant-numeric:tabular-nums;color:var(--muted);min-width:96px;text-align:right}
+label.loop{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:15px}
+.beats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:22px 0 0;padding:0;list-style:none}
+.beats li{border-left:3px solid var(--line);padding:2px 0 2px 12px;font-size:14px;color:var(--muted)}
+.beats li.on{border-color:var(--accent);color:var(--ink)}
+.beats b{display:block;font-family:Fraunces,Georgia,serif;font-weight:600;color:var(--ink);font-size:15px}
+details{margin-top:26px;border-top:1px solid var(--line);padding-top:14px}
+summary{cursor:pointer;font-family:Fraunces,Georgia,serif;font-size:19px}
+details p{color:var(--muted);max-width:66ch}
+.code{overflow-x:auto;background:var(--code-bg);border-radius:10px;padding:14px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;max-height:420px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Autumn Window</h1>
+  <p class="lede">A 12-second cozy lofi loop: dusk outside, a lantern flickers on, the wind picks up, and one leaf drifts in to wake a sleeping fox.</p>
+
+  <div class="stage"><canvas id="c" width="1920" height="1080" aria-label="Animated scene of a fox sleeping by an autumn window"></canvas></div>
+
+  <div class="controls">
+    <button class="primary" id="play" aria-label="Pause">Pause</button>
+    <button id="restart">Restart</button>
+    <input type="range" id="scrub" min="0" max="12" step="0.01" value="0" aria-label="Timeline">
+    <span class="time" id="time">0.0 / 12.0s</span>
+    <label class="loop"><input type="checkbox" id="loop" checked> Loop</label>
+  </div>
+
+  <ol class="beats" id="beats"></ol>
+
+  <details>
+    <summary>Scene spec (what an AI would write)</summary>
+    <p>The picture above is drawn by a small engine that reads this JSON. Timings, positions, colors and keyframes all live here, so a prompt-to-animation tool only needs the AI to write a spec like this one.</p>
+    <pre class="code" id="spec"></pre>
+  </details>
+</main>
+
+<script>
+/* ---------------- SCENE SPEC (data only) ---------------- */
+const SCENE = {
+  meta: { title: "autumn window", subtitle: "lofi loop, 12 seconds", duration: 12, width: 1280, height: 720 },
+  palette: {
+    skyTop: "#4d3f7d", skyMid: "#e5836a", skyLow: "#f8c98a", sun: "#ffe2a8",
+    hillFar: "#9c5f7a", hillNear: "#6a3d5a",
+    wallTop: "#2b2030", wallLow: "#3a2a2e", floor: "#231a1e", wood: "#5a3a2c", frame: "#1c1419",
+    fox: "#e9773c", foxDark: "#b4512a", cream: "#fbeedd", cushion: "#7b3f4c",
+    leaves: ["#e8742f", "#d9482b", "#f2b03c", "#c9612d", "#a83a2a"]
+  },
+  beats: [
+    { at: 0, label: "Fade in", note: "Dusk room, camera starts a slow push-in" },
+    { at: 2, label: "Lantern on", note: "Flickers, then warm light fills the room" },
+    { at: 4.5, label: "Wind gust", note: "Leaves swirl; one breaks loose" },
+    { at: 8, label: "Leaf lands", note: "On the fox’s head; it wakes" },
+    { at: 9.8, label: "Title", note: "Fox dozes off, title, fade to loop" }
+  ],
+  tracks: {
+    fade:     [[0,0],[1.2,1],[11.2,1],[12,0]],
+    camZoom:  [[0,1.0],[12,1.07]],
+    lampOn:   [[0,0.1],[2,0.1],[2.12,0.85],[2.22,0.25],[2.32,0.9],[2.42,0.4],[2.6,1],[12,1]],
+    wind:     [[0,0.35],[4.3,0.35],[5.2,1.8],[7.4,1.8],[8.6,0.45],[12,0.35]],
+    foxAwake: [[0,0],[8.05,0],[8.6,1],[10.3,1],[11.0,0],[12,0]],
+    title:    [[0,0],[9.8,0],[10.5,1],[11.3,1],[11.9,0]]
+  },
+  objects: [
+    { type: "wall" },
+    { type: "window", cx: 910, archY: 270, radius: 200, bottom: 520 },
+    { type: "outside", leafCount: 34, seed: 7 },
+    { type: "windowFrame" },
+    { type: "plant", x: 742, y: 517 },
+    { type: "lightShaft" },
+    { type: "lantern", x: 520, length: 140 },
+    { type: "turntable", x: 110, y: 440, spinSeconds: 1.5 },
+    { type: "notes", x: 240, y: 385, count: 5 },
+    { type: "pumpkin", x: 560, y: 672 },
+    { type: "stool", x: 1150, y: 612 },
+    { type: "cushion", x: 820, y: 632 },
+    { type: "fox", x: 820, y: 596, breathSeconds: 3 },
+    { type: "heroLeaf", start: 4.8, end: 8.0, from: [1010, 120], to: [742, 536] },
+    { type: "glow" }
+  ],
+  overlays: [ { type: "vignette" }, { type: "title" }, { type: "fade" } ]
+};
+
+/* ---------------- ENGINE ---------------- */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const S = cv.width / SCENE.meta.width;
+const P = SCENE.palette, T = SCENE.tracks, DUR = SCENE.meta.duration;
+const TAU = Math.PI * 2;
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+const lerp = (a,b,k) => a + (b - a) * k;
+const ease = k => k < .5 ? 2*k*k : 1 - Math.pow(-2*k + 2, 2) / 2;
+function track(keys, t, smooth = true){
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++){
+    const [t1, v1] = keys[i], [t0, v0] = keys[i-1];
+    if (t <= t1){ let k = (t - t0) / ((t1 - t0) || 1); if (smooth) k = ease(k); return lerp(v0, v1, k); }
+  }
+  return keys[keys.length - 1][1];
+}
+function integrate(keys, t){ let s = 0; const dt = 0.04; for (let x = 0; x < t; x += dt) s += track(keys, x) * Math.min(dt, t - x); return s; }
+function rng(seed){ return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let r = Math.imul(seed ^ seed >>> 15, 1 | seed); r = r + Math.imul(r ^ r >>> 7, 61 | r) ^ r; return ((r ^ r >>> 14) >>> 0) / 4294967296; }; }
+const mod = (a, n) => ((a % n) + n) % n;
+
+function leafShape(x, y, s, rot, color){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.fillStyle = color;
+  ctx.beginPath(); ctx.moveTo(0, -s*1.2);
+  ctx.quadraticCurveTo(s*1.1, -s*0.6, s*0.9, s*0.2);
+  ctx.quadraticCurveTo(s*0.5, s*0.3, 0, s);
+  ctx.quadraticCurveTo(-s*0.5, s*0.3, -s*0.9, s*0.2);
+  ctx.quadraticCurveTo(-s*1.1, -s*0.6, 0, -s*1.2); ctx.fill();
+  ctx.strokeStyle = 'rgba(80,30,10,.45)'; ctx.lineWidth = Math.max(1, s*0.12);
+  ctx.beginPath(); ctx.moveTo(0, -s*0.9); ctx.lineTo(0, s*1.5); ctx.stroke();
+  ctx.restore();
+}
+function rrect(x, y, w, h, r){ ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function windowPath(o){ ctx.beginPath(); ctx.moveTo(o.cx - o.radius, o.bottom); ctx.lineTo(o.cx - o.radius, o.archY); ctx.arc(o.cx, o.archY, o.radius, Math.PI, 0); ctx.lineTo(o.cx + o.radius, o.bottom); ctx.closePath(); }
+const WIN = SCENE.objects.find(o => o.type === 'window');
+
+// precomputed leaves
+const outsideObj = SCENE.objects.find(o => o.type === 'outside');
+const LEAVES = (() => { const r = rng(outsideObj.seed); return Array.from({length: outsideObj.leafCount}, () => ({
+  x0: 690 + r()*460, y0: r()*560, speed: 32 + r()*48, sway: 8 + r()*22, freq: 0.6 + r()*1.2,
+  spin: (r() - .5) * 4, size: 5 + r()*7, color: P.leaves[Math.floor(r()*P.leaves.length)], drift: 0.6 + r()*0.8, ph: r()*TAU })); })();
+
+const draw = {
+  wall(o, t){
+    const g = ctx.createLinearGradient(0, 0, 0, 560); g.addColorStop(0, P.wallTop); g.addColorStop(1, P.wallLow);
+    ctx.fillStyle = g; ctx.fillRect(-100, -100, 1480, 680);
+    ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 2;
+    for (let x = 0; x < 1300; x += 78){ ctx.beginPath(); ctx.moveTo(x, -100); ctx.lineTo(x, 560); ctx.stroke(); }
+    ctx.fillStyle = P.floor; ctx.fillRect(-100, 560, 1480, 260);
+    ctx.fillStyle = '#2c2024'; ctx.fillRect(-100, 552, 1480, 12);
+    ctx.strokeStyle = 'rgba(255,255,255,.04)';
+    for (let y = 590; y < 760; y += 34){ ctx.beginPath(); ctx.moveTo(-100, y); ctx.lineTo(1380, y); ctx.stroke(); }
+  },
+  window(){},
+  outside(o, t){
+    ctx.save(); windowPath(WIN); ctx.clip();
+    const g = ctx.createLinearGradient(0, 70, 0, 520); g.addColorStop(0, P.skyTop); g.addColorStop(.55, P.skyMid); g.addColorStop(1, P.skyLow);
+    ctx.fillStyle = g; ctx.fillRect(680, 50, 470, 480);
+    const sg = ctx.createRadialGradient(840, 430, 10, 840, 430, 170); sg.addColorStop(0, 'rgba(255,226,168,.95)'); sg.addColorStop(.25, 'rgba(255,200,140,.5)'); sg.addColorStop(1, 'rgba(255,190,130,0)');
+    ctx.fillStyle = sg; ctx.fillRect(680, 250, 470, 280);
+    ctx.fillStyle = P.sun; ctx.beginPath(); ctx.arc(840, 430, 34, 0, TAU); ctx.fill();
+    ctx.fillStyle = P.hillFar; ctx.beginPath(); ctx.moveTo(680, 460); ctx.quadraticCurveTo(780, 400, 880, 450); ctx.quadraticCurveTo(990, 380, 1150, 440); ctx.lineTo(1150, 530); ctx.lineTo(680, 530); ctx.fill();
+    ctx.fillStyle = P.hillNear; ctx.beginPath(); ctx.moveTo(680, 500); ctx.quadraticCurveTo(860, 450, 1150, 490); ctx.lineTo(1150, 530); ctx.lineTo(680, 530); ctx.fill();
+    // maple tree
+    const sway = Math.sin(t * TAU / 4) * 3 * track(T.wind, t);
+    ctx.strokeStyle = '#3a2228'; ctx.lineCap = 'round';
+    ctx.lineWidth = 16; ctx.beginPath(); ctx.moveTo(1050, 530); ctx.quadraticCurveTo(1045, 420, 1035 + sway, 320); ctx.stroke();
+    ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(1042, 400); ctx.lineTo(990 + sway, 330); ctx.moveTo(1040, 370); ctx.lineTo(1095 + sway, 310); ctx.stroke();
+    [[1035,265,62,'#c9482a'],[985,300,48,'#e2702f'],[1092,290,52,'#d95a2c'],[1040,220,44,'#f0a03a'],[960,250,36,'#e8862f'],[1110,240,38,'#b83c29']].forEach(([x,y,r,c]) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x + sway*1.4, y, r, 0, TAU); ctx.fill(); });
+    // falling leaves (deterministic: same t = same frame)
+    const wi = integrate(T.wind, t);
+    for (const L of LEAVES){
+      const y = 40 + mod(L.y0 + L.speed * t * (0.8 + track(T.wind, t)*0.25), 520);
+      const x = 680 + mod(L.x0 - 680 - wi * 34 * L.drift, 480) + Math.sin(t * L.freq * TAU / 2 + L.ph) * L.sway;
+      leafShape(x, y, L.size, t * L.spin + L.ph, L.color);
+    }
+    ctx.restore();
+  },
+  windowFrame(){
+    ctx.save();
+    ctx.strokeStyle = P.frame; ctx.lineWidth = 22; windowPath(WIN); ctx.stroke();
+    ctx.strokeStyle = '#4a3029'; ctx.lineWidth = 6; windowPath(WIN); ctx.stroke();
+    ctx.strokeStyle = P.frame; ctx.lineWidth = 9;
+    ctx.beginPath(); ctx.moveTo(WIN.cx, WIN.archY - WIN.radius); ctx.lineTo(WIN.cx, WIN.bottom); ctx.moveTo(WIN.cx - WIN.radius, 310); ctx.lineTo(WIN.cx + WIN.radius, 310); ctx.stroke();
+    ctx.fillStyle = '#6b4634'; ctx.fillRect(686, 514, 448, 24);
+    ctx.fillStyle = '#8a5c43'; ctx.fillRect(686, 514, 448, 5);
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(696, 538, 428, 8);
+    ctx.restore();
+  },
+  plant(o, t){
+    ctx.save(); ctx.translate(o.x, o.y);
+    ctx.strokeStyle = '#5f8a4e'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    for (let i = 0; i < 5; i++){ const a = -Math.PI/2 + (i - 2) * 0.35 + Math.sin(t*TAU/4 + i) * 0.03; ctx.beginPath(); ctx.moveTo(0, -18); ctx.quadraticCurveTo(Math.cos(a)*18, -18 + Math.sin(a)*22, Math.cos(a)*30, -18 + Math.sin(a)*40); ctx.stroke(); }
+    ctx.fillStyle = '#b5613d'; ctx.beginPath(); ctx.moveTo(-16, -20); ctx.lineTo(16, -20); ctx.lineTo(12, 0); ctx.lineTo(-12, 0); ctx.fill();
+    ctx.restore();
+  },
+  lightShaft(o, t){
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createLinearGradient(0, 540, 0, 720); g.addColorStop(0, 'rgba(255,170,100,.10)'); g.addColorStop(1, 'rgba(255,170,100,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(700, 546); ctx.lineTo(1120, 546); ctx.lineTo(1020, 740); ctx.lineTo(520, 740); ctx.fill();
+    ctx.restore();
+  },
+  lantern(o, t){
+    const light = track(T.lampOn, t, false) * (0.93 + 0.07 * Math.sin(t*23) * Math.sin(t*7.3));
+    const ang = Math.sin(t * TAU / 4) * 0.05;
+    ctx.save(); ctx.translate(o.x, -20); ctx.rotate(ang);
+    ctx.strokeStyle = '#1a1216'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, o.length + 20); ctx.stroke();
+    const y = o.length + 20;
+    ctx.fillStyle = '#241a1d'; ctx.beginPath(); ctx.moveTo(-14, y); ctx.lineTo(14, y); ctx.lineTo(26, y + 16); ctx.lineTo(-26, y + 16); ctx.fill();
+    ctx.fillStyle = `rgba(255,${170 + 50*light},${90 + 40*light},${0.25 + 0.75*light})`; rrect(-20, y + 16, 40, 58, 6); ctx.fill();
+    ctx.fillStyle = `rgba(255,245,210,${light})`; ctx.beginPath(); ctx.ellipse(0, y + 48, 6, 11, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#241a1d'; ctx.lineWidth = 4; rrect(-20, y + 16, 40, 58, 6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y + 16); ctx.lineTo(0, y + 74); ctx.stroke();
+    ctx.fillStyle = '#241a1d'; ctx.fillRect(-24, y + 74, 48, 8);
+    ctx.restore();
+    draw._light = light; draw._lampPos = [o.x + Math.sin(ang) * (o.length + 70), o.length + 50];
+  },
+  turntable(o, t){
+    ctx.save(); ctx.translate(o.x, o.y);
+    ctx.fillStyle = '#2a1d1f'; ctx.fillRect(14, 150, 10, 30); ctx.fillRect(266, 150, 10, 30);
+    ctx.fillStyle = P.wood; rrect(0, 0, 290, 160, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 3; ctx.strokeRect(14, 60, 262, 40); ctx.strokeRect(14, 108, 262, 40);
+    ctx.fillStyle = '#c99a6b'; ctx.fillRect(135, 77, 20, 5); ctx.fillRect(135, 125, 20, 5);
+    ctx.fillStyle = '#1e1517'; rrect(30, -38, 230, 40, 6); ctx.fill();
+    ctx.fillStyle = '#0f0b0c'; ctx.beginPath(); ctx.ellipse(125, -40, 80, 20, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 1;
+    for (let r = 30; r < 78; r += 9){ ctx.beginPath(); ctx.ellipse(125, -40, r, r/4, 0, 0, TAU); ctx.stroke(); }
+    const a = t / o.spinSeconds * TAU;
+    ctx.strokeStyle = 'rgba(255,220,180,.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(125, -40, 60, 15, 0, a, a + 0.8); ctx.stroke();
+    ctx.fillStyle = '#e0703a'; ctx.beginPath(); ctx.ellipse(125, -40, 22, 6, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#cfc2b0'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(240, -52); ctx.lineTo(232, -30); ctx.lineTo(178, -36); ctx.stroke();
+    ctx.fillStyle = '#cfc2b0'; ctx.beginPath(); ctx.arc(240, -52, 7, 0, TAU); ctx.fill();
+    ctx.restore();
+  },
+  notes(o, t){
+    ctx.save(); ctx.font = '600 26px Georgia, serif'; ctx.textAlign = 'center';
+    for (let i = 0; i < o.count; i++){
+      const ph = mod(t + i * 0.6, 3) / 3;
+      ctx.fillStyle = `rgba(251,238,221,${Math.sin(ph * Math.PI) * 0.8})`;
+      ctx.fillText(i % 2 ? '♫' : '♪', o.x + ph * 90 + Math.sin(ph * 6 + i) * 14, o.y - ph * 170);
+    }
+    ctx.restore();
+  },
+  pumpkin(o){
+    ctx.save(); ctx.translate(o.x, o.y);
+    ['#c85a1f','#e2752a','#d8661f'].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse((i-1)*16, 0, 22, 26, 0, 0, TAU); ctx.fill(); });
+    ctx.fillStyle = '#4e6b35'; ctx.fillRect(-3, -34, 6, 12);
+    ctx.restore();
+  },
+  stool(o, t){
+    ctx.save(); ctx.translate(o.x, o.y);
+    ctx.strokeStyle = '#3e2a24'; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(-30, 0); ctx.lineTo(-38, 80); ctx.moveTo(30, 0); ctx.lineTo(38, 80); ctx.moveTo(0, 4); ctx.lineTo(0, 82); ctx.stroke();
+    ctx.fillStyle = '#6b4634'; ctx.beginPath(); ctx.ellipse(0, 0, 46, 11, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#e9d6bd'; rrect(-18, -36, 36, 34, 6); ctx.fill();
+    ctx.strokeStyle = '#e9d6bd'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(19, -20, 9, -Math.PI/2, Math.PI/2); ctx.stroke();
+    ctx.fillStyle = '#5a3424'; ctx.beginPath(); ctx.ellipse(0, -36, 16, 4, 0, 0, TAU); ctx.fill();
+    ctx.lineWidth = 3; ctx.lineCap = 'round';
+    for (let i = 0; i < 3; i++){
+      ctx.beginPath();
+      for (let j = 0; j <= 20; j++){
+        const y = -40 - j * 5.5, x = (i - 1) * 8 + Math.sin(j * 0.35 - t * TAU / 3 + i * 2) * 7 * (j / 20);
+        j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.strokeStyle = 'rgba(251,238,221,.22)'; ctx.stroke();
+    }
+    ctx.restore();
+  },
+  cushion(o){
+    ctx.save(); ctx.translate(o.x, o.y);
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(0, 30, 215, 22, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#5e2f3a'; ctx.beginPath(); ctx.ellipse(0, 10, 205, 40, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = P.cushion; ctx.beginPath(); ctx.ellipse(0, 0, 200, 36, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#4c2530'; [-110, 0, 110].forEach(x => { ctx.beginPath(); ctx.arc(x, 2, 4, 0, TAU); ctx.fill(); });
+    ctx.restore();
+  },
+  fox(o, t){
+    const awake = track(T.foxAwake, t);
+    const breath = 1 + 0.035 * Math.sin(t * TAU / o.breathSeconds);
+    const lift = awake * 7;
+    draw._headLift = lift;
+    ctx.save(); ctx.translate(o.x, o.y);
+    // body
+    ctx.save(); ctx.scale(1, breath);
+    ctx.fillStyle = P.fox; ctx.beginPath(); ctx.ellipse(10, 0, 112, 46, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = P.foxDark; ctx.beginPath(); ctx.ellipse(30, -22, 80, 18, 0.05, Math.PI, TAU); ctx.fill();
+    ctx.restore();
+    // tail wrapping the front
+    const tip = Math.sin(t * TAU / 3) * 4 + awake * Math.sin(t * 9) * 10;
+    const tailPath = () => { ctx.beginPath(); ctx.moveTo(110, 4); ctx.quadraticCurveTo(80, 52, -20, 40); ctx.quadraticCurveTo(-70, 36, -92 + tip, 22); };
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = P.foxDark; ctx.lineWidth = 50; tailPath(); ctx.stroke();
+    ctx.strokeStyle = P.fox; ctx.lineWidth = 42; tailPath(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,220,180,.25)'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(80, 30); ctx.quadraticCurveTo(40, 52, -30, 46); ctx.stroke();
+    ctx.fillStyle = P.foxDark; ctx.beginPath(); ctx.arc(-96 + tip, 21, 25, 0, TAU); ctx.fill();
+    ctx.fillStyle = P.cream; ctx.beginPath(); ctx.arc(-98 + tip, 21, 21, 0, TAU); ctx.fill();
+    // head
+    ctx.translate(-85, -16 - lift);
+    const twitch = (t > 8.05 && t < 8.7) ? Math.sin((t - 8.05) * 40) * 0.25 : 0;
+    [[-16, -26, -0.25 + twitch], [16, -28, 0.2]].forEach(([ex, ey, r]) => {
+      ctx.save(); ctx.translate(ex, ey); ctx.rotate(r);
+      ctx.fillStyle = P.fox; ctx.beginPath(); ctx.moveTo(-13, 6); ctx.lineTo(0, -26); ctx.lineTo(13, 6); ctx.fill();
+      ctx.fillStyle = '#2a1a18'; ctx.beginPath(); ctx.moveTo(-6, -11); ctx.lineTo(0, -26); ctx.lineTo(6, -11); ctx.fill();
+      ctx.restore();
+    });
+    ctx.fillStyle = P.fox; ctx.beginPath(); ctx.ellipse(0, 0, 38, 32, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = P.cream; ctx.beginPath(); ctx.moveTo(-8, 4); ctx.quadraticCurveTo(-30, 30, -58, 18); ctx.quadraticCurveTo(-30, 2, -8, 4); ctx.fill();
+    ctx.fillStyle = P.fox; ctx.beginPath(); ctx.moveTo(-10, -12); ctx.quadraticCurveTo(-40, -2, -58, 14); ctx.quadraticCurveTo(-30, 8, -8, 6); ctx.fill();
+    ctx.fillStyle = '#231615'; ctx.beginPath(); ctx.arc(-58, 14, 5, 0, TAU); ctx.fill();
+    // eye
+    if (awake > 0.06){
+      ctx.fillStyle = '#231615'; ctx.beginPath(); ctx.ellipse(-14, -6, 5, 6 * awake, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = `rgba(255,255,255,${awake})`; ctx.beginPath(); ctx.arc(-12, -8, 1.6, 0, TAU); ctx.fill();
+    } else {
+      ctx.strokeStyle = '#231615'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(-14, -8, 7, 0.2, Math.PI - 0.2); ctx.stroke();
+    }
+    ctx.restore();
+  },
+  heroLeaf(o, t){
+    if (t < o.start) return;
+    const k = clamp((t - o.start) / (o.end - o.start), 0, 1), e = ease(k);
+    const [x0, y0] = o.from, [x3, y3] = o.to;
+    const x1 = 900, y1 = 280, x2 = 640, y2 = 360;
+    const u = 1 - e;
+    let x = u*u*u*x0 + 3*u*u*e*x1 + 3*u*e*e*x2 + e*e*e*x3;
+    let y = u*u*u*y0 + 3*u*u*e*y1 + 3*u*e*e*y2 + e*e*e*y3;
+    x += Math.sin(k * Math.PI * 5) * 34 * (1 - k);
+    const rot = k < 1 ? k * 9 + Math.sin(k * 20) * 0.4 : 9.4;
+    if (k >= 1) y -= draw._headLift || 0;
+    leafShape(x, y, 13, rot, '#e8572a');
+  },
+  glow(o, t){
+    const L = draw._light || 0, [lx, ly] = draw._lampPos || [520, 210];
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(lx, ly, 10, lx, ly, 620);
+    g.addColorStop(0, `rgba(255,180,100,${0.38 * L})`); g.addColorStop(0.35, `rgba(255,140,80,${0.12 * L})`); g.addColorStop(1, 'rgba(255,120,60,0)');
+    ctx.fillStyle = g; ctx.fillRect(-100, -100, 1480, 920);
+    ctx.restore();
+    ctx.fillStyle = `rgba(12,6,16,${0.38 * (1 - L)})`; ctx.fillRect(-100, -100, 1480, 920);
+  }
+};
+
+const overlay = {
+  vignette(){
+    const g = ctx.createRadialGradient(640, 360, 280, 640, 360, 820);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.6)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 1280, 720);
+  },
+  title(o, t){
+    const a = track(T.title, t); if (a <= 0) return;
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = P.cream;
+    ctx.font = 'italic 400 46px Fraunces, Georgia, serif'; ctx.fillText(SCENE.meta.title, 64 + (1 - a) * 12, 668);
+    ctx.globalAlpha = a * 0.75; ctx.font = '400 19px Figtree, system-ui, sans-serif'; ctx.fillText(SCENE.meta.subtitle, 66 + (1 - a) * 12, 698);
+    ctx.restore();
+  },
+  fade(o, t){ ctx.fillStyle = `rgba(10,5,10,${1 - track(T.fade, t)})`; ctx.fillRect(0, 0, 1280, 720); }
+};
+
+function render(t){
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  ctx.clearRect(0, 0, 1280, 720);
+  const z = track(T.camZoom, t, false), cx = 760, cy = 400;
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(z, z); ctx.translate(-cx, -cy);
+  for (const o of SCENE.objects) draw[o.type] && draw[o.type](o, t);
+  ctx.restore();
+  for (const o of SCENE.overlays) overlay[o.type](o, t);
+}
+
+/* ---------------- PLAYER UI ---------------- */
+const playBtn = document.getElementById('play'), scrub = document.getElementById('scrub'),
+      timeEl = document.getElementById('time'), loopEl = document.getElementById('loop'), beatsEl = document.getElementById('beats');
+document.getElementById('spec').textContent = JSON.stringify(SCENE, null, 2);
+beatsEl.innerHTML = SCENE.beats.map(b => `<li><b>${b.at.toFixed(1)}s · ${b.label}</b>${b.note}</li>`).join('');
+const beatItems = [...beatsEl.children];
+
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let t = reduce ? 9 : 0, playing = !reduce, last = performance.now();
+function setPlaying(p){ playing = p; playBtn.textContent = p ? 'Pause' : 'Play'; playBtn.setAttribute('aria-label', p ? 'Pause' : 'Play'); last = performance.now(); }
+setPlaying(playing);
+playBtn.onclick = () => { if (!playing && t >= DUR) t = 0; setPlaying(!playing); };
+document.getElementById('restart').onclick = () => { t = 0; setPlaying(true); };
+scrub.oninput = () => { t = parseFloat(scrub.value); };
+
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (playing){ t += dt; if (t >= DUR){ if (loopEl.checked) t -= DUR; else { t = DUR; setPlaying(false); } } }
+  render(Math.min(t, DUR - 0.001));
+  scrub.value = t; timeEl.textContent = `${t.toFixed(1)} / ${DUR.toFixed(1)}s`;
+  let cur = 0; SCENE.beats.forEach((b, i) => { if (t >= b.at) cur = i; });
+  beatItems.forEach((li, i) => li.classList.toggle('on', i === cur));
+  requestAnimationFrame(frame);
+}
+(document.fonts ? document.fonts.load('italic 46px Fraunces') : Promise.resolve()).catch(() => {}).finally(() => requestAnimationFrame(frame));
+</script>
+</body>
+</html>

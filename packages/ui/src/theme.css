@@ -1,0 +1,89 @@
+/* Tailwind mapped onto tokens.css: defaults are cleared so classes can only use token values. */
+@import "tailwindcss";
+@import "./tokens.css";
+@source "./";
+
+@theme {
+  --color-*: initial;
+  --color-app: var(--bg-app);
+  --color-panel: var(--bg-panel);
+  --color-raised: var(--bg-raised);
+  --color-hover: var(--bg-hover);
+  --color-surround: var(--canvas-surround);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--text-1);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-select: var(--select);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-scrim: var(--scrim);
+  --color-transparent: transparent;
+
+  --font-*: initial;
+  --font-ui: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  --text-*: initial;
+  --text-micro: var(--text-micro);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-title: var(--text-title);
+  --text-dialog: var(--text-dialog);
+  --text-hero: var(--text-hero);
+
+  --font-weight-*: initial;
+  --font-weight-normal: var(--weight-regular);
+  --font-weight-semibold: var(--weight-strong);
+
+  --radius-*: initial;
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: 9999px;
+
+  --shadow-*: initial;
+  --shadow-float: var(--shadow-float);
+
+  /* 4px grid: p-1 = 4px, p-2 = 8px ... */
+  --spacing: 4px;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg-app);
+    color: var(--text-1);
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: var(--radius-md); border: 2px solid var(--bg-panel); }
+  ::-webkit-scrollbar-track { background: transparent; }
+  * { scrollbar-width: thin; scrollbar-color: var(--bg-hover) transparent; }
+}
+
+@utility transition-ui {
+  transition-property: background-color, color, border-color, opacity, box-shadow;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease);
+}
+@utility float {
+  box-shadow: var(--shadow-float), 0 0 0 1px var(--border-strong);
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+}
+
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 4px)) scale(0.98); } }

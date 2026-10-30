@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "meta": { "title": "autumn window", "subtitle": "lofi loop, 12 seconds", "duration": 12, "fps": 30, "width": 1280, "height": 720 },
+  "palette": {
+    "skyTop": "#4d3f7d", "skyMid": "#e5836a", "skyLow": "#f8c98a", "sun": "#ffe2a8",
+    "hillFar": "#9c5f7a", "hillNear": "#6a3d5a",
+    "wallTop": "#2b2030", "wallLow": "#3a2a2e", "floor": "#231a1e", "wood": "#5a3a2c", "frame": "#1c1419",
+    "fox": "#e9773c", "foxDark": "#b4512a", "cream": "#fbeedd", "cushion": "#7b3f4c"
+  },
+  "tracks": {
+    "fade":     { "keys": [[0, 0], [1.2, 1], [11.2, 1], [12, 0]] },
+    "camZoom":  { "keys": [[0, 1.0], [12, 1.07]], "ease": "linear" },
+    "lampOn":   { "keys": [[0, 0.1], [2, 0.1], [2.12, 0.85], [2.22, 0.25], [2.32, 0.9], [2.42, 0.4], [2.6, 1], [12, 1]], "ease": "linear" },
+    "wind":     { "keys": [[0, 0.35], [4.3, 0.35], [5.2, 1.8], [7.4, 1.8], [8.6, 0.45], [12, 0.35]] },
+    "foxAwake": { "keys": [[0, 0], [8.05, 0], [8.6, 1], [10.3, 1], [11.0, 0], [12, 0]] },
+    "leafLift": { "keys": [[0, 0], [8.05, 0], [8.6, -7], [10.3, -7], [11.0, 0], [12, 0]] },
+    "title":    { "keys": [[0, 0], [9.8, 0], [10.5, 1], [11.3, 1], [11.9, 0]] }
+  },
+  "camera": { "zoom": "@camZoom", "x": 760, "y": 400 },
+  "layers": [
+    { "id": "room", "type": "room", "params": { "top": "$wallTop", "bottom": "$wallLow", "floor": "$floor" } },
+    { "id": "window", "type": "window", "params": {
+      "x": 910, "y": 520, "wind": "@wind", "leafCount": 34, "seed": 7,
+      "skyTop": "$skyTop", "skyMid": "$skyMid", "skyLow": "$skyLow", "sun": "$sun",
+      "hillFar": "$hillFar", "hillNear": "$hillNear", "frame": "$frame",
+      "leafColors": ["#e8742f", "#d9482b", "#f2b03c", "#c9612d", "#a83a2a"]
+    } },
+    { "id": "plant", "type": "plant", "params": { "x": 742, "y": 517 } },
+    { "id": "light-shaft", "type": "light-shaft", "params": { "x": 910, "y": 546 } },
+    { "id": "lantern", "type": "lantern", "params": { "x": 520, "length": 140, "light": "@lampOn" } },
+    { "id": "turntable", "type": "turntable", "params": { "x": 110, "y": 440, "spinSeconds": 1.5, "wood": "$wood" } },
+    { "id": "notes", "type": "music-notes", "params": { "x": 240, "y": 385, "count": 5, "color": "$cream" } },
+    { "id": "pumpkin", "type": "pumpkin", "params": { "x": 560, "y": 672 } },
+    { "id": "stool", "type": "stool-mug", "params": { "x": 1150, "y": 612 } },
+    { "id": "cushion", "type": "cushion", "params": { "x": 820, "y": 632, "color": "$cushion" } },
+    { "id": "fox", "type": "fox", "params": {
+      "x": 820, "y": 596, "color": "$fox", "dark": "$foxDark", "cream": "$cream",
+      "awake": "@foxAwake", "breathSeconds": 3, "twitchAt": 8.05
+    } },
+    { "id": "hero-leaf", "type": "path-mover", "params": {
+      "prop": "leaf", "propParams": { "size": 13, "color": "#e8572a" },
+      "start": 4.8, "end": 8.0, "from": [1010, 120], "c1": [900, 280], "c2": [640, 360], "to": [742, 536],
+      "wobble": 34, "spin": 9, "offsetY": "@leafLift"
+    } },
+    { "id": "glow", "type": "glow", "params": {} }
+  ],
+  "overlays": [
+    { "type": "vignette" },
+    { "type": "title", "params": { "text": "autumn window", "subtitle": "lofi loop, 12 seconds", "opacity": "@title", "color": "$cream" } },
+    { "type": "fade", "params": { "reveal": "@fade" } }
+  ],
+  "beats": [
+    { "at": 0, "label": "Fade in", "note": "Dusk room, camera starts a slow push-in" },
+    { "at": 2, "label": "Lantern on", "note": "Flickers, then warm light fills the room" },
+    { "at": 4.5, "label": "Wind gust", "note": "Leaves swirl; one breaks loose" },
+    { "at": 8, "label": "Leaf lands", "note": "On the fox's head; it wakes" },
+    { "at": 9.8, "label": "Title", "note": "Fox dozes off, title, fade to loop" }
+  ]
+}

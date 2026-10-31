@@ -1,5 +1,7 @@
 // Importing a file registers its object; add new objects here to make them available to the engine and the AI catalog.
 import "./backgrounds/paper";
+import "./backgrounds/painting";
+import "./backgrounds/footage";
 import "./backgrounds/room";
 import "./backgrounds/window";
 import "./props/plant";
@@ -13,6 +15,18 @@ import "./props/cushion";
 import "./characters/fox";
 import "./props/leaf";
 import "./props/path-mover";
+// night study set
+import "./backgrounds/night-sky";
+import "./backgrounds/city-lights";
+import "./particles/rain";
+import "./backgrounds/balcony";
+import "./props/string-lights";
+import "./props/hanging-plant";
+import "./props/desk";
+import "./props/laptop";
+import "./props/candle";
+import "./characters/studier";
+import "./characters/cat";
 import "./fx/glow";
 import "./fx/vignette";
 import "./text/title";

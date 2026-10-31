@@ -2,6 +2,7 @@ import { validateScene } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import autumn from "@anim/spec/examples/autumn-window.json";
 import ball from "@anim/spec/examples/bouncing-ball.json";
+import nightStudy from "@anim/spec/examples/night-study.json";
 
 export type Aspect = "16:9" | "9:16" | "1:1";
 export const ASPECTS: Record<Aspect, { label: string; hint: string; width: number; height: number }> = {
@@ -18,6 +19,7 @@ function mustValidate(input: unknown): SceneSpec {
 
 export const EXAMPLES: { id: string; title: string; load: () => SceneSpec }[] = [
   { id: "autumn-window", title: "Autumn window", load: () => mustValidate(autumn) },
+  { id: "night-study", title: "Night study (rainy balcony)", load: () => mustValidate(nightStudy) },
   { id: "bouncing-ball", title: "Bouncing ball (hand-drawn)", load: () => mustValidate(ball) },
 ];
 

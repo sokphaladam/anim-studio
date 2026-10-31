@@ -14,3 +14,4 @@ export { EmptyState } from "./components/EmptyState";
 export { StatusPill } from "./components/StatusPill";
 export { cx } from "./components/cx";
 export { hexToHsv, hsvToHex } from "./components/color";
+export { CardPicker, type PickerCard } from "./components/CardPicker";

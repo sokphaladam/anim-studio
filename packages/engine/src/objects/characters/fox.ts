@@ -3,7 +3,7 @@ import { defineObject, z, num, color, TAU } from "../common";
 export const fox = defineObject({
   type: "fox",
   category: "characters",
-  description: "A fox curled up asleep that breathes, sways its tail, and can wake (awake 0 = asleep, 1 = eyes open, head lifted).",
+  description: "A fox curled up asleep that breathes, sways its tail, and can wake (awake 0 = asleep, 1 = eyes open, head lifted); x, y is the middle of its body, so y = floor - 45 to lie on the floor.",
   params: z.object({
     x: num,
     y: num,

@@ -4,7 +4,16 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p ." },
-  "dependencies": { "@anim/engine": "workspace:*", "@anim/spec": "workspace:*", "zod": "^4.1.0" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@anim/engine": "workspace:*",
+    "@anim/spec": "workspace:*",
+    "fast-json-patch": "^3.1.1",
+    "zod": "^4.1.0"
+  }
 }

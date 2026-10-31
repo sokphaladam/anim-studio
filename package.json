@@ -6,8 +6,12 @@
     "node": ">=20"
   },
   "scripts": {
+    "predev": "node scripts/setup-ai.mjs --no-pull",
     "dev": "pnpm --parallel --filter @anim/web --filter @anim/server dev",
     "build": "pnpm -r build",
+    "desktop": "node scripts/setup-ai.mjs --no-pull && pnpm --parallel --filter @anim/web --filter @anim/server --filter @anim/desktop dev",
+    "desktop:build": "pnpm --filter @anim/desktop dist",
+    "setup:ai": "node scripts/setup-ai.mjs",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
@@ -16,6 +20,9 @@
     "compare": "node scripts/compare-reference.mjs",
     "e2e:flipbook": "node scripts/flipbook-e2e.mjs",
     "generate": "pnpm --filter @anim/server exec tsx src/cli.ts",
+    "setup:painter": "node scripts/setup-painter.mjs",
+    "style-samples": "pnpm --filter @anim/server exec tsx src/style-samples.ts",
+    "demo": "pnpm --filter @anim/server exec tsx src/demo.ts",
     "e2e:generate": "node scripts/generate-e2e.mjs"
   },
   "devDependencies": {

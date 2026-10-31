@@ -9,6 +9,7 @@ import { HistoryDocker } from "../dockers/History";
 import { LayersDocker } from "../dockers/Layers";
 import { Timeline } from "../dockers/Timeline";
 import { useStudio } from "../store";
+import { saveProject } from "../store/projects";
 import { useCommands } from "../workspace/commands";
 import { Dock, defaultLayout } from "../workspace/Dock";
 import { ToolOptionsBar } from "../workspace/ToolOptionsBar";
@@ -16,20 +17,29 @@ import { Toolbox } from "../workspace/Toolbox";
 
 export const AUTOSAVE_KEY = "anim-studio.autosave";
 
-/** Saves the scene to localStorage every 30 s when it changed (projects get real storage in Milestone 4). */
+/**
+ * Saves the scene as a project version every 30 s when it changed (an untouched, never-saved scene is not saved).
+ * If the server can't be reached, keeps a backup in localStorage that the welcome screen offers to restore.
+ */
 function useAutosave() {
   const toast = useToast();
   useEffect(() => {
     let saved: unknown = null;
     let warned = false;
-    const id = setInterval(() => {
-      const spec = useStudio.getState().spec;
-      if (!spec || spec === saved) return;
+    const id = setInterval(async () => {
+      const { spec, past, projectId } = useStudio.getState();
+      if (!spec || spec === saved || (!projectId && !past.length)) return;
       try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ savedAt: Date.now(), spec }));
+        await saveProject("Autosave");
         saved = spec;
+        localStorage.removeItem(AUTOSAVE_KEY);
       } catch {
-        if (!warned) toast({ title: "Autosave failed", description: "The scene is too large for browser storage. Project saving arrives in Milestone 4.", tone: "warning" });
+        try {
+          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ savedAt: Date.now(), spec }));
+        } catch {
+          // too large for browser storage
+        }
+        if (!warned) toast({ title: "Autosave failed", description: "Can't reach the server (is pnpm dev running?). A backup is kept in this browser.", tone: "warning" });
         warned = true;
       }
     }, 30_000);

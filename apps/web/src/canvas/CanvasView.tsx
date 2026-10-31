@@ -1,4 +1,5 @@
 import { ENGINE_FONTS, apply, createRenderer, invert, layerMatrix, type Renderer } from "@anim/engine";
+import { loadSpecImages } from "../components/images";
 import type { SceneSpec } from "@anim/spec";
 import { useToast } from "@anim/ui";
 import { useEffect, useRef, useState } from "react";
@@ -153,6 +154,7 @@ export function CanvasView() {
     if (!renderer.current) renderer.current = createRenderer(canvas.current, vs);
     else renderer.current.setSpec(vs);
     renderMain();
+    loadSpecImages(vs).then(renderMain);
     drawOverlay();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- renderMain/drawOverlay read fresh state from the store
   }, [spec, hidden, cssW, cssH]);

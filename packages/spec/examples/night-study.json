@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "meta": { "title": "1 a.m. focus", "subtitle": "rainy night study loop, 12 seconds", "style": "lofi-cozy", "duration": 12, "fps": 30, "width": 1280, "height": 720 },
+  "palette": {
+    "skyTop": "#0e0b28", "skyLow": "#43305e", "wall": "#4a2f45", "wood": "#2d1d2c", "floor": "#24182a",
+    "bulb": "#ffd38a", "screen": "#8ec5ff", "hoodie": "#d9a441", "hair": "#2f5d62", "catFur": "#3a3540"
+  },
+  "tracks": {
+    "fade":    { "keys": [[0, 0], [1, 1], [11, 1], [12, 0]] },
+    "camZoom": { "keys": [[0, 1.0], [12, 1.04]], "ease": "linear" },
+    "rain":    { "keys": [[0, 0.5], [5, 0.5], [6, 1.3], [9, 1.3], [12, 0.5]] },
+    "title":   { "keys": [[0, 0], [1.5, 0], [2.3, 1], [4.5, 1], [5.3, 0]] }
+  },
+  "camera": { "zoom": "@camZoom", "x": 640, "y": 420 },
+  "layers": [
+    { "id": "sky", "type": "night-sky", "params": { "top": "$skyTop", "bottom": "$skyLow", "horizon": 470 } },
+    { "id": "city", "type": "city-lights", "params": { "x0": 0, "x1": 790, "base": 470 } },
+    { "id": "rain", "type": "rain", "params": { "x0": -60, "x1": 780, "y0": -60, "y1": 600, "intensity": "@rain" } },
+    { "id": "balcony", "type": "balcony", "params": { "railY": 440, "floorY": 600, "wallX": 780, "wall": "$wall", "wood": "$wood", "floor": "$floor" } },
+    { "id": "lights", "type": "string-lights", "params": { "x0": 790, "y0": 30, "x1": 1320, "y1": 40, "sag": 55, "bulbs": 11, "color": "$bulb" } },
+    { "id": "lights-2", "type": "string-lights", "params": { "x0": -40, "y0": 10, "x1": 780, "y1": 30, "sag": 40, "bulbs": 14, "color": "$bulb" } },
+    { "id": "hanging", "type": "hanging-plant", "params": { "x": 900, "y": -10, "length": 80 } },
+    { "id": "plant", "type": "plant", "params": { "x": 1190, "y": 600 } },
+    { "id": "cat", "type": "cat", "params": { "x": 150, "y": 430, "color": "$catFur", "facing": 1, "blinkEvery": 4 } },
+    { "id": "studier", "type": "studier", "params": { "x": 770, "y": 600, "facing": -1, "deskHeight": 150, "reach": 112, "top": "$hoodie", "hair": "$hair" } },
+    { "id": "desk", "type": "desk", "params": { "x": 420, "y": 450, "width": 300, "height": 150 } },
+    { "id": "laptop", "type": "laptop", "params": { "x": 545, "y": 450, "screen": "$screen" } },
+    { "id": "candle", "type": "candle", "params": { "x": 462, "y": 412 } }
+  ],
+  "overlays": [
+    { "type": "vignette", "params": { "strength": 0.55 } },
+    { "type": "title", "params": { "text": "1 a.m. focus", "subtitle": "rain on the balcony", "opacity": "@title" } },
+    { "type": "fade", "params": { "reveal": "@fade" } }
+  ],
+  "beats": [
+    { "at": 0, "label": "Late night", "note": "studying on the balcony, light rain" },
+    { "at": 6, "label": "Rain picks up", "note": "heavier rain, lights keep glowing" },
+    { "at": 11, "label": "Fade out", "note": "loops back to the start" }
+  ]
+}

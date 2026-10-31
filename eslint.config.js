@@ -4,7 +4,7 @@ import hooks from "eslint-plugin-react-hooks";
 const HEX = "/#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?([0-9a-fA-F]{2})?\\b/";
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/**", "**/dist/**", "**/storybook-static/**", "screenshots/**", "reference/**"] },
+  { ignores: ["**/node_modules/**", "**/dist/**", "**/storybook-static/**", "screenshots/**", "reference/**", "apps/desktop/.stage/**", "apps/desktop/release/**", "data/**"] },
   ...tseslint.configs.recommended,
   { files: ["**/*.tsx"], plugins: { "react-hooks": hooks }, rules: hooks.configs.recommended.rules },
   // UI code may only use colors from packages/ui/src/tokens.css (engine artwork is exempt)

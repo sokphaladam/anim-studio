@@ -5,6 +5,8 @@ export interface GenerateJSONArgs {
   schema: object;
   /** Called with each streamed text chunk. */
   onToken?: (chunk: string) => void;
+  /** An image (data: URL) to look at; only providers with `vision` use it. */
+  image?: string;
   signal?: AbortSignal;
 }
 
@@ -13,6 +15,10 @@ export interface Provider {
   name: string;
   model: string;
   generateJSON(args: GenerateJSONArgs): Promise<string>;
+  /** Whether generateJSON can look at `image`. */
+  vision?: boolean;
+  /** Frees GPU memory (local models), so the image painter fits. */
+  unload?(): Promise<void>;
 }
 
 /** An error worth showing to the user as-is, with how to fix it. */

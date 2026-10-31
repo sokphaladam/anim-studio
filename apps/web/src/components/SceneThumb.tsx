@@ -1,6 +1,7 @@
 import { ENGINE_FONTS, createRenderer } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useRef } from "react";
+import { loadSpecImages } from "./images";
 
 /** Thumbnail at the scene's midpoint; plays while hovered or focused. */
 export function SceneThumb({ spec, playing }: { spec: SceneSpec; playing: boolean }) {
@@ -9,7 +10,7 @@ export function SceneThumb({ spec, playing }: { spec: SceneSpec; playing: boolea
     const r = createRenderer(ref.current!, spec);
     const mid = spec.meta.duration / 2;
     r.render(mid);
-    Promise.allSettled(ENGINE_FONTS.map((f) => document.fonts.load(f))).then(() => !playing && r.render(mid));
+    Promise.allSettled([...ENGINE_FONTS.map((f) => document.fonts.load(f)), loadSpecImages(spec)]).then(() => !playing && r.render(mid));
     if (!playing) return;
     let raf = 0;
     const start = performance.now();

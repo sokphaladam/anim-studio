@@ -1,5 +1,6 @@
 import { ENGINE_FONTS, createRenderer } from "@anim/engine";
 import { useEffect, useRef } from "react";
+import { loadSpecImages } from "../components/images";
 import { EXAMPLES } from "../store/scenes";
 
 declare global {
@@ -17,11 +18,12 @@ export function RenderOnly({ id }: { id: string }) {
   const ex = EXAMPLES.find((e) => e.id === id);
   useEffect(() => {
     if (!ex || !ref.current) return;
-    const r = createRenderer(ref.current, ex.load());
+    const spec = ex.load();
+    const r = createRenderer(ref.current, spec);
     window.renderFrame = (t) => r.render(t);
     r.render(0);
     // shortcut: only bundled examples until projects are stored in Milestone 4
-    Promise.allSettled(ENGINE_FONTS.map((f) => document.fonts.load(f))).then(() => {
+    Promise.allSettled([...ENGINE_FONTS.map((f) => document.fonts.load(f)), loadSpecImages(spec)]).then(() => {
       r.render(0);
       window.renderReady = true;
     });

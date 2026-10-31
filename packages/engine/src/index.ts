@@ -1,7 +1,9 @@
 import type { Layer, SceneSpec } from "@anim/spec";
 import "./objects";
 import { layerPivot } from "./bounds";
-import { ctxOf, drawFrame, frameIndexAt, type CanvasFactory } from "./drawing";
+import { ctxOf, drawFrame, frameIndexAt, type CanvasFactory, type Surface } from "./drawing";
+import { applyGrade } from "./grade";
+import { setCanvasFactory } from "./images";
 import { IDENTITY, mul, rotate, scale, translate, type Mat } from "./matrix";
 import { BLENDS } from "./objects/drawing";
 import { drawWith, getObject, makeEnv, parseParams, type Ctx2D } from "./registry";
@@ -14,6 +16,7 @@ export { resolve } from "./resolve";
 export { BRUSH_PRESETS, drawStroke, strokePath, frameIndexAt, drawingPivot, type CanvasFactory } from "./drawing";
 export { invert, apply, mul, type Mat } from "./matrix";
 export { objectBounds, layerPivot, type Box } from "./bounds";
+export { registerImage, getImage, imageSources, frameUrl, type Bitmap } from "./images";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */
 export const ENGINE_FONTS = ['italic 400 46px "Fraunces Variable"', "400 19px Figtree"];
@@ -62,9 +65,11 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
   const ctx = canvas.getContext("2d") as Ctx2D | null;
   if (!ctx) throw new Error("2D canvas context unavailable");
   const make = opts.createCanvas ?? defaultFactory;
+  setCanvasFactory(make);
   let spec = initial;
   // scratch surface for compositing drawing layers (cleared before every use, so it carries no state between frames)
   let scratch = make(canvas.width, canvas.height);
+  let gradeScratch: Surface | null = null;
 
   function drawDrawing(l: Layer, t: number, base: Mat, M: Mat, options?: RenderOptions) {
     const frames = l.frames ?? [];
@@ -134,6 +139,11 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
         drawWith(ctx, def, parseParams(def, l.params), t, env);
         ctx.restore();
       }
+      // the art style's grade goes over the scene but under overlays, so titles and fades stay clean
+      if (spec.meta.style) {
+        if (!gradeScratch || gradeScratch.width !== canvas.width || gradeScratch.height !== canvas.height) gradeScratch = make(canvas.width, canvas.height);
+        applyGrade(ctx, canvas, spec.meta.style, Math.floor(t * spec.meta.fps + 1e-6), gradeScratch, make);
+      }
       for (const o of spec.overlays) {
         const def = getObject(o.type);
         if (def) drawWith(ctx, def, parseParams(def, o.params), t, env);
@@ -146,3 +156,4 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
     dispose() {},
   };
 }
+export { MotionSchema, paintingBoxToScene, type Motion } from "./objects/backgrounds/painting";

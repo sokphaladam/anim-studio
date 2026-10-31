@@ -40,6 +40,8 @@ export const windowObj = defineObject({
     scale: num.default(1),
     wind: num.default(0.35),
     leafCount: z.number().int().min(0).max(200).default(34),
+    /** Multiplies how fast leaves fall; a plain number because position is speed × t. */
+    fallSpeed: z.number().min(0).max(10).default(1),
     seed: z.number().int().default(7),
     skyTop: color.default("#4d3f7d"),
     skyMid: color.default("#e5836a"),
@@ -93,7 +95,7 @@ export const windowObj = defineObject({
     // falling leaves: position is a function of t and the wind integral, never of the previous frame
     const wi = env.integrate(env.raw.wind);
     for (const L of leaves(p.seed, p.leafCount, p.leafColors.length)) {
-      const y = 40 + mod(L.y0 + L.speed * t * (0.8 + p.wind * 0.25), 520);
+      const y = 40 + mod(L.y0 + L.speed * p.fallSpeed * t * (0.8 + p.wind * 0.25), 520);
       const x = 680 + mod(L.x0 - 680 - wi * 34 * L.drift, 480) + Math.sin((t * L.freq * TAU) / 2 + L.ph) * L.sway;
       leafShape(ctx, x, y, L.size, t * L.spin + L.ph, p.leafColors[L.color]);
     }

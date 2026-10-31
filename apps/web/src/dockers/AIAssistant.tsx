@@ -1,12 +1,12 @@
-import { Button, EmptyState, StatusPill, cx } from "@anim/ui";
+import { Button, EmptyState, StatusPill, Toggle, cx } from "@anim/ui";
 import { LoaderCircle, Send, Sparkles, X } from "lucide-react";
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useAIStatus } from "../components/useAIStatus";
 import { useStudio } from "../store";
-import { aspectOf, cancelGeneration, generate, type Generation } from "../store/ai";
+import { aspectOf, cancelGeneration, editWithAI, generate, type Generation } from "../store/ai";
 
-const PHASE_LABEL = { storyboard: "Planning storyboard", spec: "Writing scene", repair: "Repairing scene" } as const;
+const PHASE_LABEL = { storyboard: "Planning storyboard", paint: "Painting the scene (about a minute)", video: "Animating frame by frame (5–10 min)", spec: "Writing scene", repair: "Repairing scene", edit: "Editing scene" } as const;
 
 function Progress({ g }: { g: Generation }) {
   return (
@@ -23,19 +23,26 @@ function Progress({ g }: { g: Generation }) {
   );
 }
 
-/** Prompt box and chat history. Sending generates a new scene (chat edits to the current scene arrive in Milestone 4). */
+/** Prompt box and chat history. Sending edits the current scene, or builds a new one in "New scene" mode (or when the scene is empty). */
 export const AIAssistantDocker = forwardRef<HTMLTextAreaElement>(function AIAssistantDocker(_, ref) {
   const ai = useAIStatus();
-  const { chat, generation } = useStudio(useShallow((s) => ({ chat: s.chat, generation: s.generation })));
+  const { chat, generation, canEdit } = useStudio(useShallow((s) => ({ chat: s.chat, generation: s.generation, canEdit: !!s.spec?.layers.length })));
   const [text, setText] = useState("");
+  const [newScene, setNewScene] = useState(false);
+  const editing = canEdit && !newScene;
   const log = useRef<HTMLDivElement>(null);
   const running = generation?.status === "running";
-  useEffect(() => log.current?.scrollTo({ top: log.current.scrollHeight }), [chat.length, running]);
+  // braces matter: newer Chromium returns a Promise from scrollTo, which React would take as a cleanup function
+  useEffect(() => {
+    log.current?.scrollTo({ top: log.current.scrollHeight });
+  }, [chat.length, running]);
 
   const send = () => {
     const spec = useStudio.getState().spec;
     if (text.trim().length < 3 || running) return;
-    generate({ prompt: text.trim(), duration: spec ? spec.meta.duration : 12, aspect: spec ? aspectOf(spec) : "16:9" }, false);
+    if (editing) editWithAI(text.trim());
+    // a new scene keeps the current scene's art style and look, so a project stays one film
+    else generate({ prompt: text.trim(), duration: spec ? spec.meta.duration : 12, aspect: spec ? aspectOf(spec) : "16:9", style: spec?.meta.style, mode: spec?.layers.some((l) => l.type === "footage") ? "video" : spec?.layers.some((l) => l.type === "painting") ? "painted" : "vector" }, false);
     setText("");
   };
 
@@ -99,13 +106,16 @@ export const AIAssistantDocker = forwardRef<HTMLTextAreaElement>(function AIAssi
               send();
             }
           }}
-          placeholder="Describe a scene…"
+          placeholder={editing ? "Say what to change… e.g. make the leaves fall faster" : "Describe a scene…"}
           aria-describedby="ai-note"
           className="w-full resize-none rounded-sm border border-transparent bg-raised p-2 text-base outline-none placeholder:text-fg-3 focus:border-line-strong"
         />
         <div className="flex items-center justify-between gap-2">
-          <span id="ai-note" className="text-micro text-fg-3">
-            Enter sends · builds a new scene (undo returns) · chat edits arrive in Milestone 4
+          <Toggle pressed={!editing} onPressedChange={setNewScene} disabled={!canEdit} label={editing ? "Build a whole new scene instead of editing this one" : "Edit the current scene instead"}>
+            New scene
+          </Toggle>
+          <span id="ai-note" className="min-w-0 flex-1 truncate text-micro text-fg-3">
+            Enter sends · {editing ? "changes this scene" : "replaces the scene"} · Ctrl+Z undoes
           </span>
           <Button type="submit" size={28} variant="primary" disabled={running || text.trim().length < 3} icon={<Send size={14} strokeWidth={1.5} />}>
             Send

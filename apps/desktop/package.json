@@ -1,0 +1,21 @@
+{
+  "name": "@anim/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "dev": "electron main.mjs",
+    "dist": "node build.mjs",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@anim/server": "workspace:^",
+    "@fastify/static": "^10.1.8"
+  },
+  "devDependencies": {
+    "electron": "^45.2.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2"
+  }
+}

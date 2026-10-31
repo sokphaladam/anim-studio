@@ -1,12 +1,13 @@
 import type { Provider } from "@anim/ai";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { buildApp } from "../src/app";
+import { createStore } from "../src/db";
 
 const storyboard = { title: "sky test", mood: "", palette: {}, beats: [{ at: 0, label: "Start" }] };
-const spec = { version: 1, meta: { title: "sky test", duration: 6, fps: 30, width: 720, height: 1280 }, layers: [{ id: "bg", type: "paper", params: {} }] };
+const spec = { version: 1, meta: { title: "sky test", duration: 6, fps: 30, width: 720, height: 1280 }, layers: [{ id: "bg", type: "paper", params: {} }, { id: "fox", type: "fox", params: { x: 360, y: 900 } }] };
 const answers = [storyboard, spec];
 const provider: Provider = { name: "mock", model: "mock", generateJSON: async () => JSON.stringify(answers.shift()) };
-const app = buildApp({ provider, config: { provider: "ollama", ollamaUrl: "http://127.0.0.1:9", ollamaModel: "x", fallback: null } });
+const app = buildApp({ provider, store: createStore(":memory:"), config: { provider: "ollama", ollamaUrl: "http://127.0.0.1:9", ollamaModel: "x", fallback: null } });
 let base = "";
 
 beforeAll(async () => {

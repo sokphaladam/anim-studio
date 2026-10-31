@@ -6,6 +6,8 @@ export interface AIConfig {
   provider: "ollama" | "openai-compatible";
   ollamaUrl: string;
   ollamaModel: string;
+  /** Download the model in the background when Ollama runs without it (OLLAMA_AUTO_SETUP=0 turns this off). */
+  autoPull?: boolean;
   fallback: { baseUrl: string; apiKey: string; model: string } | null;
 }
 
@@ -16,6 +18,7 @@ export function configFromEnv(env: Record<string, string | undefined>): AIConfig
     provider: env.AI_PROVIDER === "openai-compatible" ? "openai-compatible" : "ollama",
     ollamaUrl: env.OLLAMA_URL || "http://localhost:11434",
     ollamaModel: env.OLLAMA_MODEL || "qwen2.5-coder:14b",
+    autoPull: env.OLLAMA_AUTO_SETUP !== "0",
     fallback: fb,
   };
 }

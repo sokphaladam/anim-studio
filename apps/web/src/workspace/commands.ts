@@ -4,6 +4,9 @@ import { tinykeys } from "tinykeys";
 import { useShallow } from "zustand/react/shallow";
 import { frameOf, useStudio } from "../store";
 import { deleteLayer, findLayer, heldIndexAt, moveLayer, setFps } from "../store/edit";
+import { ART_STYLES, STYLE_IDS } from "@anim/spec";
+import { animatePainting, paintingToVideo } from "../store/ai";
+import { saveProject } from "../store/projects";
 import { EXAMPLES, blankScene, overlayKey } from "../store/scenes";
 import { deleteSelection } from "../tools/select";
 import { addDrawingLayer, changeDuration, frameAction } from "./frameActions";
@@ -29,7 +32,7 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
   const toast = useToast();
   // only the fields that change labels/checked/disabled; actions read fresh state via get()
   const v = useStudio(
-    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection })),
+    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, style: s.spec?.meta.style, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection })),
   );
   const groups = useMemo<Group[]>(() => {
     const s = get();
@@ -43,7 +46,17 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
           { id: "file.new", label: "New blank scene", shortcut: "Ctrl+Alt+N", keys: "$mod+Alt+KeyN", run: () => s.open(blankScene("16:9"), "drawing-1") },
           ...EXAMPLES.map((e) => ({ id: `file.example.${e.id}`, label: `Open example: ${e.title}`, run: () => s.open(e.load()) })),
           "separator",
-          { id: "file.save", label: "Save project", shortcut: "Ctrl+S", ...later(4), run: () => {} },
+          {
+            id: "file.save",
+            label: "Save project",
+            shortcut: "Ctrl+S",
+            keys: "$mod+KeyS",
+            run: () =>
+              saveProject("Saved").then(
+                () => toast({ title: "Saved", tone: "success" }),
+                (e: Error) => toast({ title: "Save failed", description: e.message, tone: "warning" }),
+              ),
+          },
           { id: "file.welcome", label: "Close to welcome screen", run: () => s.close() },
         ],
       },
@@ -115,6 +128,18 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
         label: "AI",
         items: [
           { id: "ai.focus", label: "Open AI assistant", run: extra.focusAI },
+          { id: "ai.animatePainting", label: "Make the painting move", disabled: !v.layers?.some((l) => l.type === "painting"), run: () => (extra.focusAI(), animatePainting()) },
+          { id: "ai.paintingToVideo", label: "Turn the painting into video (frame by frame)", disabled: !v.layers?.some((l) => l.type === "painting"), run: () => (extra.focusAI(), paintingToVideo()) },
+          "separator",
+          ...STYLE_IDS.map((id) => ({
+            id: `ai.style.${id}`,
+            label: `Art tradition: ${ART_STYLES[id].label}`,
+            checked: v.style === id,
+            run: () => {
+              const sp = get().spec;
+              if (sp) s.commit(`Art tradition: ${ART_STYLES[id].label}`, { ...sp, meta: { ...sp.meta, style: id } });
+            },
+          })),
           { id: "ai.generate", label: "Generate scene from prompt…", ...later(3), run: () => {} },
         ],
       },

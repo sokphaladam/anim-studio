@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StyleIdSchema } from "./styles";
 
 const TRACK_REF = /^@[A-Za-z_][\w-]*$/;
 const PALETTE_REF = /^\$[A-Za-z_][\w-]*$/;
@@ -61,6 +62,8 @@ export const BeatSchema = z.object({ at: z.number().min(0), label: z.string().mi
 export const MetaSchema = z.object({
   title: z.string(),
   subtitle: z.string().optional(),
+  /** Art tradition; every scene of a project shares it so they look like one film. */
+  style: StyleIdSchema.optional(),
   duration: z.number().positive().max(60),
   fps: z.union([z.literal(12), z.literal(24), z.literal(30)]).default(30),
   width: z.number().int().positive(),

@@ -13,6 +13,8 @@ type Entry = { spec: SceneSpec; label: string };
 export interface StudioState {
   screen: "welcome" | "editor";
   spec: SceneSpec | null;
+  /** Saved project this scene belongs to; null until its first save. */
+  projectId: string | null;
   /** States before each action (label = that action). */
   past: Entry[];
   /** Undone actions, most recent last. */
@@ -73,6 +75,7 @@ export const frameOf = (t: number, s: SceneSpec) => Math.min(frameCount(s) - 1, 
 export const useStudio = create<StudioState>((set, get) => ({
   screen: "welcome",
   spec: null,
+  projectId: null,
   past: [],
   future: [],
   gestureBase: null,
@@ -102,7 +105,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   aiMarks: {},
 
   open: (spec, selected = null) =>
-    set({ spec, past: [], future: [], gestureBase: null, aiMarks: {}, screen: "editor", t: 0, playing: false, range: null, selection: null, hidden: {}, locked: {}, selected, view: { zoom: 1, panX: 0, panY: 0, rotation: 0 } }),
+    set({ spec, projectId: null, past: [], future: [], gestureBase: null, aiMarks: {}, screen: "editor", t: 0, playing: false, range: null, selection: null, hidden: {}, locked: {}, selected, view: { zoom: 1, panX: 0, panY: 0, rotation: 0 } }),
   close: () => set({ screen: "welcome", playing: false }),
   commit: (label, next, opts) => {
     const { spec, past } = get();

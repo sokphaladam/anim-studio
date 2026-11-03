@@ -28,12 +28,69 @@ export interface AnimateArgs {
   signal?: AbortSignal;
 }
 
-/** Paints one image from a text prompt (PNG bytes); optionally animates a picture into a short video (MP4 bytes). */
+export interface InpaintArgs {
+  /** The picture (PNG) and a same-size mask (PNG, white = repaint). */
+  image: Uint8Array;
+  mask: Uint8Array;
+  positive: string;
+  negative: string;
+  seed: number;
+  /** 1 = paint the area from scratch; lower keeps more of what is there. */
+  denoise: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Paints one image from a text prompt (PNG bytes); optionally animates a picture into a short video (MP4 bytes), and
+ * separates parts of a picture (masks are PNGs, white = in) for layered scenes.
+ */
 export interface Painter {
   name: string;
   paint(args: PaintArgs): Promise<Uint8Array>;
   animate?(args: AnimateArgs): Promise<Uint8Array>;
+  /** Mask of the picture's subject (everything but the background). */
+  removeBackground?(image: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
+  /** Mask of what `text` names in the picture ("head"); all black when nothing matches. */
+  segment?(image: Uint8Array, text: string, signal?: AbortSignal): Promise<Uint8Array>;
+  /** The picture with the masked area repainted (whole image; unmasked pixels may drift slightly, so callers paste back). */
+  inpaint?(args: InpaintArgs): Promise<Uint8Array>;
 }
+
+/** Models layered scenes need beside the checkpoint; ComfyUI ships the nodes for both. */
+export const SEGMENT_MODEL = "sam3.1_multiplex_fp16.safetensors";
+export const BG_REMOVAL_MODEL = "birefnet.safetensors";
+
+const maskOut = (mask: [string, number]) => ({
+  toimg: { class_type: "MaskToImage", inputs: { mask } },
+  save: { class_type: "SaveImage", inputs: { images: ["toimg", 0], filename_prefix: "anim-studio/mask" } },
+});
+const bgRemovalWorkflow = (image: string) => ({
+  img: { class_type: "LoadImage", inputs: { image } },
+  model: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: BG_REMOVAL_MODEL } },
+  fg: { class_type: "RemoveBackground", inputs: { bg_removal_model: ["model", 0], image: ["img", 0] } },
+  ...maskOut(["fg", 0]),
+});
+/** SAM 3.1 text-prompted segmentation, as in ComfyUI's own blueprint (threshold 0.5, 2 refinement passes, one union mask). */
+const segmentWorkflow = (image: string, text: string) => ({
+  img: { class_type: "LoadImage", inputs: { image } },
+  sam: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: SEGMENT_MODEL } },
+  text: { class_type: "CLIPTextEncode", inputs: { clip: ["sam", 1], text } },
+  detect: { class_type: "SAM3_Detect", inputs: { model: ["sam", 0], image: ["img", 0], conditioning: ["text", 0], threshold: 0.5, refine_iterations: 2, individual_masks: false } },
+  ...maskOut(["detect", 0]),
+});
+/** Masked img2img with the painter's own checkpoint (no inpainting model needed). */
+const inpaintWorkflow = (a: InpaintArgs, image: string, mask: string) => ({
+  ckpt: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: CHECKPOINT } },
+  img: { class_type: "LoadImage", inputs: { image } },
+  mask: { class_type: "LoadImageMask", inputs: { image: mask, channel: "red" } },
+  pos: { class_type: "CLIPTextEncode", inputs: { clip: ["ckpt", 1], text: a.positive } },
+  neg: { class_type: "CLIPTextEncode", inputs: { clip: ["ckpt", 1], text: a.negative } },
+  enc: { class_type: "VAEEncode", inputs: { pixels: ["img", 0], vae: ["ckpt", 2] } },
+  noise: { class_type: "SetLatentNoiseMask", inputs: { samples: ["enc", 0], mask: ["mask", 0] } },
+  sample: { class_type: "KSampler", inputs: { model: ["ckpt", 0], positive: ["pos", 0], negative: ["neg", 0], latent_image: ["noise", 0], seed: a.seed, steps: 28, cfg: 5, sampler_name: "euler_ancestral", scheduler: "normal", denoise: a.denoise } },
+  decode: { class_type: "VAEDecode", inputs: { samples: ["sample", 0], vae: ["ckpt", 2] } },
+  save: { class_type: "SaveImage", inputs: { images: ["decode", 0], filename_prefix: "anim-studio/inpaint" } },
+});
 
 export const VIDEO_MODEL = "wan2.2_ti2v_5B_fp16.safetensors";
 /** Sizes the video model works at (multiples of 32), per aspect. */
@@ -79,11 +136,12 @@ export async function comfyHealth(opts: { url: string; dir: string }) {
   const models = join(opts.dir, "ComfyUI_windows_portable", "ComfyUI", "models");
   const installed = existsSync(join(models, "checkpoints", CHECKPOINT));
   const video = existsSync(join(models, "diffusion_models", VIDEO_MODEL));
+  const layered = existsSync(join(models, "checkpoints", SEGMENT_MODEL)) && existsSync(join(models, "background_removal", BG_REMOVAL_MODEL));
   try {
     await fetch(`${opts.url}/system_stats`, { signal: AbortSignal.timeout(2000) });
-    return { installed: true, video, running: true };
+    return { installed: true, video, layered, running: true };
   } catch {
-    return { installed, video, running: false };
+    return { installed, video, layered, running: false };
   }
 }
 
@@ -129,15 +187,25 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
       for (let i = 0; i < maxSeconds; i++) {
         await sleep(1000);
         if (signal?.aborted) throw new Error("Cancelled");
-        const h = (await (await fetch(`${url}/history/${id}`)).json()) as Record<string, { outputs?: Record<string, Record<string, unknown>>; status?: { status_str?: string; messages?: unknown[] } }>;
+        const h = (await (await fetch(`${url}/history/${id}`)).json()) as Record<string, { outputs?: Record<string, Record<string, unknown>>; status?: { status_str?: string; completed?: boolean; messages?: unknown[] } }>;
         const job = h[id];
-        if (job?.status?.status_str === "error") throw new AIError(`The ${what} failed`, JSON.stringify(job.status.messages ?? "").slice(-300));
+        if (job?.status?.status_str === "error") {
+          // the execution_error message names the failing node and the real cause (the rest is a dump of its inputs)
+          const err = (job.status.messages ?? []).find((m): m is [string, { node_type?: string; exception_message?: string }] => Array.isArray(m) && m[0] === "execution_error")?.[1];
+          const cause = err?.exception_message?.trim().split("\n")[0];
+          const lowRam = /not enough memory|DefaultCPUAllocator/i.test(cause ?? "");
+          throw new AIError(
+            `The ${what} failed${cause ? ` in ${err?.node_type ?? "a node"}: ${cause.slice(0, 200)}` : ""}`,
+            lowRam ? "The PC ran out of memory. Close other apps and try again, or enlarge the Windows page file (System › About › Advanced system settings › Performance › Virtual memory)." : "Try again; if it keeps failing, check the ComfyUI window for details.",
+          );
+        }
         // images come back under "images"; videos under "images" (animated), "videos" or "gifs" depending on the node
         const out = job && Object.values(job.outputs ?? {}).flatMap((o) => Object.values(o).flat().filter((f): f is File => !!f && typeof f === "object" && "filename" in f))[0];
         if (out) {
           const q = new URLSearchParams({ filename: out.filename, subfolder: out.subfolder, type: out.type });
           return new Uint8Array(await (await fetch(`${url}/view?${q}`)).arrayBuffer());
         }
+        if (job?.status?.completed) throw new AIError(`The ${what} finished without an image`);
       }
       throw new AIError(`The ${what} took too long`, "Is the GPU busy with something else?");
     } catch (e) {
@@ -148,19 +216,36 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
     }
   }
 
+  /** Puts a PNG into ComfyUI's input folder; resolves with the name its LoadImage nodes use. */
+  async function upload(png: Uint8Array, name: string, signal?: AbortSignal) {
+    await ensureRunning(signal);
+    const form = new FormData();
+    form.append("image", new Blob([png as BlobPart], { type: "image/png" }), name);
+    form.append("overwrite", "true");
+    const up = (await (await fetch(`${url}/upload/image`, { method: "POST", body: form, signal })).json()) as { name?: string };
+    if (!up.name) throw new AIError("The image painter couldn't receive the picture");
+    return up.name;
+  }
+
   return {
     name: "comfyui",
     // a 1344×768 image takes ~30 s on an RTX 3060, more on the first run while the model loads
     paint: (a) => run(workflow(a), a.signal, 900, "painter"),
     async animate(a) {
-      await ensureRunning(a.signal);
-      const form = new FormData();
-      form.append("image", new Blob([a.image as BlobPart], { type: "image/png" }), "anim-studio-start.png");
-      form.append("overwrite", "true");
-      const up = (await (await fetch(`${url}/upload/image`, { method: "POST", body: form, signal: a.signal })).json()) as { name?: string };
-      if (!up.name) throw new AIError("The video model couldn't receive the painting");
+      const image = await upload(a.image, "anim-studio-start.png", a.signal);
       // a 5 s 1280×704 clip takes several minutes on a 12 GB card
-      return run(videoWorkflow(a, up.name), a.signal, 3600, "video model");
+      return run(videoWorkflow(a, image), a.signal, 3600, "video model");
+    },
+    async removeBackground(png, signal) {
+      return run(bgRemovalWorkflow(await upload(png, "anim-studio-cutout.png", signal)), signal, 600, "background remover");
+    },
+    async segment(png, text, signal) {
+      return run(segmentWorkflow(await upload(png, "anim-studio-segment.png", signal), text), signal, 600, "segmentation model");
+    },
+    async inpaint(a) {
+      const image = await upload(a.image, "anim-studio-inpaint.png", a.signal);
+      const mask = await upload(a.mask, "anim-studio-inpaint-mask.png", a.signal);
+      return run(inpaintWorkflow(a, image, mask), a.signal, 900, "painter");
     },
   };
 }

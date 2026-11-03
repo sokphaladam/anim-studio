@@ -3,7 +3,7 @@ import type { Generation, ChatMessage } from "./ai";
 import { create } from "zustand";
 
 export type Tool = "brush" | "eraser" | "fill" | "shapes" | "transform" | "select" | "eyedropper";
-export type BrushPreset = "pencil" | "ink" | "marker" | "airbrush";
+export type BrushPreset = "pencil" | "ink" | "brush-pen" | "marker" | "wash" | "airbrush";
 export type Selection = { layer: string; frame: number; indices: number[] } | null;
 
 const HISTORY_LIMIT = 200;
@@ -42,7 +42,7 @@ export interface StudioState {
   view: { zoom: number; panX: number; panY: number; rotation: number };
   /** Timeline frame cell width in px. */
   frameWidth: number;
-  ui: { palette: boolean; shortcuts: boolean };
+  ui: { palette: boolean; shortcuts: boolean; export: boolean };
   /** The AI job in progress (or the last one that finished). */
   generation: Generation | null;
   chat: ChatMessage[];
@@ -99,7 +99,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   selected: null,
   view: { zoom: 1, panX: 0, panY: 0, rotation: 0 },
   frameWidth: 16,
-  ui: { palette: false, shortcuts: false },
+  ui: { palette: false, shortcuts: false, export: false },
   generation: null,
   chat: [],
   aiMarks: {},

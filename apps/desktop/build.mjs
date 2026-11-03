@@ -26,7 +26,7 @@ await bundle({
   format: "esm",
   target: "node22",
   // native module / bundled binary: installed into the staged app instead
-  external: ["better-sqlite3", "ffmpeg-static"],
+  external: ["better-sqlite3", "ffmpeg-static", "@napi-rs/canvas"],
   // CommonJS dependencies inside an ES module bundle still call require()
   banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   logLevel: "warning",
@@ -41,7 +41,7 @@ const deps = pkg("apps/server").dependencies;
 const version = pkg("apps/desktop").version;
 writeFileSync(
   join(stage, "package.json"),
-  JSON.stringify({ name: "anim-studio", productName: "Anim Studio", version, description: "Local 2D animation studio", author: "sokphaladam", type: "module", main: "main.mjs", dependencies: { "better-sqlite3": deps["better-sqlite3"], "ffmpeg-static": deps["ffmpeg-static"] } }, null, 2),
+  JSON.stringify({ name: "anim-studio", productName: "Anim Studio", version, description: "Local 2D animation studio", author: "sokphaladam", type: "module", main: "main.mjs", dependencies: { "better-sqlite3": deps["better-sqlite3"], "ffmpeg-static": deps["ffmpeg-static"], "@napi-rs/canvas": deps["@napi-rs/canvas"], "@fontsource/figtree": deps["@fontsource/figtree"], "@fontsource-variable/fraunces": deps["@fontsource-variable/fraunces"] } }, null, 2),
 );
 run("npm install --omit=dev --no-audit --no-fund", stage);
 

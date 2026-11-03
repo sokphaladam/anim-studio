@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "meta": { "title": "Reading room", "subtitle": "summer dusk loop, 12 seconds", "duration": 12, "fps": 30, "width": 1280, "height": 720 },
+  "palette": { "wallTop": "#3a2a3a", "wallLow": "#4a3438", "floor": "#2a1d22", "wood": "#5a3a28", "glow": "#e9ff8a" },
+  "tracks": { "fade": { "keys": [[0, 0], [1, 1], [11, 1], [12, 0]] } },
+  "layers": [
+    { "id": "room", "type": "room", "params": { "top": "$wallTop", "bottom": "$wallLow", "floor": "$floor", "floorY": 600 } },
+    { "id": "window", "type": "window", "params": { "x": 640, "y": 600, "scale": 0.8, "leafCount": 12 } },
+    { "id": "fireflies", "type": "fireflies", "params": { "x0": 470, "y0": 200, "x1": 810, "y1": 520, "count": 14, "size": 4, "color": "$glow", "period": 6 } },
+    { "id": "shelf", "type": "bookshelf", "params": { "x": 90, "y": 600, "width": 230, "height": 330, "shelves": 4, "wood": "$wood" } },
+    { "id": "clock", "type": "wall-clock", "params": { "x": 1040, "y": 210, "radius": 52, "time": 9.75, "speed": 1 } },
+    { "id": "plant", "type": "plant", "params": { "x": 1120, "y": 600 } }
+  ],
+  "overlays": [
+    { "type": "vignette", "params": { "strength": 0.5 } },
+    { "type": "fade", "params": { "reveal": "@fade" } }
+  ]
+}

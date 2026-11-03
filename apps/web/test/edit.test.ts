@@ -2,7 +2,8 @@ import { validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addStroke, deleteFrame, duplicateFrame, insertBlankFrame, moveFrame, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { addStroke, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
 const dot = (x: number): Stroke => ({ tool: "brush", preset: "ink", color: "#000000", size: 4, points: [[x, 10, 0.5]] });
@@ -117,5 +118,58 @@ describe("scene length", () => {
     d = setDuration(d, 5);
     expect(d.layers[1].frames).toEqual([]);
     valid(d);
+  });
+});
+
+describe("rigged layers", () => {
+  const rig = (): SceneSpec => {
+    const r = validateScene({
+      version: 1,
+      meta: { title: "rig", duration: 6, fps: 30, width: 320, height: 180 },
+      layers: [
+        { id: "clock", type: "image", params: { asset: "clock", w: 10, h: 10 } },
+        { id: "girl", type: "group" },
+        { id: "girl_body", type: "image", parent: "girl", params: { asset: "body", w: 10, h: 10 } },
+        { id: "girl_head", type: "image", parent: "girl_body", pivot: [5, 9], params: { asset: "head", w: 10, h: 10 } },
+      ],
+      assets: { clock: { src: "/api/images/a.png", width: 1, height: 1 }, body: { src: "/api/images/b.png", width: 1, height: 1 }, head: { src: "/api/images/c.png", width: 1, height: 1 } },
+      actions: [{ id: "look", type: "look_at", part: "girl_head", target: "clock", start: 3, end: 5 }],
+    });
+    if (!r.ok) throw new Error(r.errors.join());
+    return r.spec;
+  };
+
+  it("renaming a parent or a target keeps the rig and actions pointing at it", () => {
+    const s = renameLayer(renameLayer(rig(), "girl_body", "body"), "clock", "wall_clock");
+    expect(s.layers.find((l) => l.id === "girl_head")!.parent).toBe("body");
+    expect(s.actions![0].target).toBe("wall_clock");
+    valid(s);
+  });
+
+  it("deleting a parent moves its parts up; deleting a target drops its action", () => {
+    let s = deleteLayer(rig(), "girl_body");
+    expect(s.layers.find((l) => l.id === "girl_head")!.parent).toBe("girl");
+    valid(s);
+    s = deleteLayer(rig(), "clock");
+    expect(s.actions).toEqual([]);
+    valid(s);
+  });
+
+  it("hiding a group hides its parts, not the rest", () => {
+    expect(visibleSpec(rig(), { girl: true }).layers.map((l) => l.id)).toEqual(["clock"]);
+    expect(visibleSpec(rig(), { girl_head: true }).layers.map((l) => l.id)).toEqual(["clock", "girl", "girl_body"]);
+  });
+
+  it("asset references survive undo and redo", () => {
+    const st = useStudio.getState();
+    st.open(rig());
+    st.commit("Move clock", setTransform(useStudio.getState().spec!, "clock", { x: 20 }, 0, false));
+    st.commit("Delete head", deleteLayer(useStudio.getState().spec!, "girl_head"));
+    st.undo();
+    st.undo();
+    expect(useStudio.getState().spec).toEqual(rig());
+    st.redo();
+    expect(useStudio.getState().spec!.assets).toEqual(rig().assets);
+    valid(useStudio.getState().spec!);
   });
 });

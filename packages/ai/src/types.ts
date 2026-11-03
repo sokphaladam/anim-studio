@@ -23,7 +23,8 @@ export interface Provider {
 
 /** An error worth showing to the user as-is, with how to fix it. */
 export class AIError extends Error {
-  constructor(message: string, readonly fix?: string) {
+  /** `unavailable`: the provider couldn't be reached at all (not running, model missing), so another one may be tried. */
+  constructor(message: string, readonly fix?: string, readonly unavailable = false) {
     super(message);
   }
 }

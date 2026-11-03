@@ -44,7 +44,12 @@ export function newDrawingLayer(spec: SceneSpec, aboveId: string | null): { spec
   return { spec: { ...spec, layers }, id };
 }
 
-export const deleteLayer = (spec: SceneSpec, id: string): SceneSpec => ({ ...spec, layers: spec.layers.filter((l) => l.id !== id) });
+/** Removes a layer; its rig children move up to its parent and actions on it go, so the scene stays valid. */
+export function deleteLayer(spec: SceneSpec, id: string): SceneSpec {
+  const up = findLayer(spec, id)?.parent;
+  const layers = spec.layers.filter((l) => l.id !== id).map((l) => (l.parent === id ? { ...l, parent: up } : l));
+  return { ...spec, layers, ...(spec.actions && { actions: spec.actions.filter((a) => a.part !== id && a.target !== id) }) };
+}
 
 /**
  * Adds a stroke at `frame`. With autoFrame, drawing where no frame starts creates a new blank frame (flipbook style);
@@ -172,7 +177,12 @@ export function moveLayer(spec: SceneSpec, id: string, to: number): SceneSpec | 
   return { ...spec, layers };
 }
 
-export const renameLayer = (spec: SceneSpec, from: string, to: string): SceneSpec => mapLayer(spec, from, (l) => ({ ...l, id: to }));
+/** Renames a layer and every reference to it (rig parents, actions). */
+export function renameLayer(spec: SceneSpec, from: string, to: string): SceneSpec {
+  const layers = spec.layers.map((l) => (l.id === from || l.parent === from ? { ...l, ...(l.id === from && { id: to }), ...(l.parent === from && { parent: to }) } : l));
+  const swap = <T extends string | undefined>(id: T) => (id === from ? to : id) as T;
+  return { ...spec, layers, ...(spec.actions && { actions: spec.actions.map((a) => ({ ...a, part: swap(a.part), target: swap(a.target) })) }) };
+}
 export const setFps = (spec: SceneSpec, fps: 12 | 24 | 30): SceneSpec => ({ ...spec, meta: { ...spec.meta, fps } });
 
 /**

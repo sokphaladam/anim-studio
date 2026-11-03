@@ -1,17 +1,26 @@
-import { comfyHealth, ollamaHealth, ollamaPull, type AIConfig, type PullState } from "@anim/ai";
+import { comfyHealth, ollamaHealth, ollamaPull, type AIConfig, type Painter, type PullState } from "@anim/ai";
 import type { FastifyInstance } from "fastify";
 
-export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { url: string; dir: string }) {
+export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { url: string; dir: string }, swapped?: Painter) {
   let pull: PullState | null = null;
 
-  /** Whether painted scenes can be made: the painter is installed (it starts on demand) or already running. */
-  app.get("/api/health/painter", async () => comfyHealth(painter));
+  /** Whether painted scenes can be made: the painter is installed (it starts on demand) or already running. A swapped-in painter (tests) reports what it can do. */
+  app.get("/api/health/painter", async () =>
+    swapped ? { installed: true, running: true, video: !!swapped.animate, layered: !!(swapped.removeBackground && swapped.segment && swapped.inpaint) } : comfyHealth(painter),
+  );
 
   app.get("/api/health", async () => {
     if (config.provider === "openai-compatible")
       return config.fallback
         ? { ok: true, provider: "openai-compatible", model: config.fallback.model, message: `Cloud AI ready: ${config.fallback.model.split(",")[0].trim()}` }
         : { ok: false, provider: "openai-compatible", model: "", message: "Cloud AI is not configured", fix: "Set FALLBACK_BASE_URL, FALLBACK_API_KEY and FALLBACK_MODEL in .env" };
+    const local = await localHealth();
+    // opt-in fallback: say plainly that prompts go to the cloud model while Ollama can't answer
+    const fb = config.useFallback && config.fallback;
+    return !local.ok && fb ? { ...local, ok: true, provider: "openai-compatible", model: fb.model, message: `Cloud AI standing in: ${fb.model.split(",")[0].trim()}`, fix: `${local.message}. Prompts go to the cloud until Ollama is back.` } : local;
+  });
+
+  async function localHealth() {
     const h = await ollamaHealth({ url: config.ollamaUrl, model: config.ollamaModel });
     const base = { provider: "ollama", model: config.ollamaModel, ...h };
     if (!h.reachable) return { ...base, ok: false, message: "Ollama is not running — start it and refresh", fix: `Run pnpm setup:ai to install and start Ollama, or check OLLAMA_URL (${config.ollamaUrl})` };
@@ -30,5 +39,5 @@ export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { 
     }
     pull = null;
     return { ...base, ok: true, message: `Local AI ready: ${config.ollamaModel}` };
-  });
+  }
 }

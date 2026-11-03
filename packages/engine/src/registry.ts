@@ -4,7 +4,7 @@ import { integrate } from "./tracks";
 import { resolve } from "./resolve";
 
 export type Ctx2D = CanvasRenderingContext2D;
-export type Category = "backgrounds" | "particles" | "props" | "characters" | "fx" | "text" | "drawing";
+export type Category = "backgrounds" | "particles" | "props" | "characters" | "fx" | "text" | "drawing" | "images" | "groups";
 
 export interface Env {
   spec: Spec;

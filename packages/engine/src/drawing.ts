@@ -20,6 +20,8 @@ export const BRUSH_PRESETS: Record<string, { thinning: number; smoothing: number
   ink: { thinning: 0.55, smoothing: 0.5, streamline: 0.4, blur: 0 },
   marker: { thinning: 0, smoothing: 0.6, streamline: 0.4, blur: 0 },
   airbrush: { thinning: 0, smoothing: 0.6, streamline: 0.4, blur: 0.35 },
+  "brush-pen": { thinning: 0.85, smoothing: 0.6, streamline: 0.5, blur: 0 },
+  wash: { thinning: 0.2, smoothing: 0.7, streamline: 0.5, blur: 0.12 },
 };
 
 /** Fills the perfect-freehand outline of a brush/eraser stroke (in the ctx's current transform). */

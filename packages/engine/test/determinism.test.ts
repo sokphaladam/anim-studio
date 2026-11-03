@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { hashes, loadExample } from "./helpers";
 
 describe("determinism", () => {
-  for (const name of ["autumn-window", "bouncing-ball", "night-study"])
+  for (const name of ["autumn-window", "bouncing-ball", "night-study", "snowy-owl", "reading-room"])
     it(`${name}: same spec + same t gives identical pixels, regardless of render order`, () => {
       const spec = loadExample(name);
       const d = spec.meta.duration;

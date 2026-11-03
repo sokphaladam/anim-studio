@@ -1,9 +1,11 @@
-export { generateScene, exampleFor, contentProblems, tidy, normalize, keepPainted, footageScene, videoPrompt, PAINT_SIZE, paintPrompt, type PaintFn, type AnimateFn, type Footage, StoryboardSchema, MAX_REPAIRS, ASPECT_SIZE, type GenerateEvent, type GenerateRequest, type Storyboard, type Aspect } from "./generate";
-export { configFromEnv, providerFor, type AIConfig } from "./config";
+export { normalize, videoPrompt, PAINT_SIZE, paintPrompt, LOOK, ASPECT_SIZE, type AnimateFn, type Footage, type GenerateRequest, type Aspect } from "./generate";
+export { configFromEnv, providerFor, withFallback, type AIConfig } from "./config";
 export { ollama, ollamaHealth, ollamaPull, type PullState } from "./providers/ollama";
 export { openaiCompatible } from "./providers/openai-compatible";
 export { extractJson } from "./json";
 export { AIError, type Provider, type GenerateJSONArgs } from "./types";
 export { editScene, type EditResult } from "./edit";
-export { comfyui, comfyHealth, CHECKPOINT, VIDEO_MODEL, VIDEO_SIZE, type Painter, type PaintArgs, type AnimateArgs } from "./painters/comfyui";
+export { comfyui, comfyHealth, CHECKPOINT, VIDEO_MODEL, VIDEO_SIZE, SEGMENT_MODEL, BG_REMOVAL_MODEL, type Painter, type PaintArgs, type AnimateArgs, type InpaintArgs } from "./painters/comfyui";
+export { generateLayered, planProblems, LayeredPlanSchema, type LayeredPlan, type LayeredTools, type LayeredEvent, type LayeredStage } from "./layered";
+export type { Raster } from "./masks";
 export { findMotions, type PaintingInfo } from "./regions";

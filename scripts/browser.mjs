@@ -8,6 +8,7 @@ const CANDIDATES = [
   "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
 ].filter(Boolean);
 
 export async function launch() {

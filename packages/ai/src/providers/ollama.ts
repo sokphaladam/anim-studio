@@ -27,9 +27,9 @@ export function ollama(opts: { url: string; model: string }): Provider {
         });
       } catch (e) {
         if (signal?.aborted) throw e;
-        throw new AIError("Ollama is not running — start it and refresh", `Start Ollama (the app, or \`ollama serve\`) at ${url}.`);
+        throw new AIError("Ollama is not running — start it and refresh", `Start Ollama (the app, or \`ollama serve\`) at ${url}.`, true);
       }
-      if (res.status === 404) throw new AIError("Model not found", `Run \`ollama pull ${opts.model}\`.`);
+      if (res.status === 404) throw new AIError("Model not found", `Run \`ollama pull ${opts.model}\`.`, true);
       if (!res.ok) throw new AIError(`Ollama error ${res.status}: ${(await res.text()).slice(0, 300)}`);
       let out = "";
       for await (const line of lines(res)) {

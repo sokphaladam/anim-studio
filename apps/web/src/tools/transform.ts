@@ -1,7 +1,7 @@
 import { apply, defaultFactory, invert, layerMatrix, layerPivot, objectBounds, resolve } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import { useStudio } from "../store";
-import { bbox, findLayer, heldIndexAt, setStrokes, setTransform, strokePoints, transformStroke } from "../store/edit";
+import { bbox, findLayer, heldIndexAt, mapLayer, setStrokes, setTransform, strokePoints, transformStroke } from "../store/edit";
 import { dashedPath } from "./select";
 import type { Ctx2D, Pt, ToolContext, ToolController } from "./types";
 
@@ -9,7 +9,7 @@ type Target =
   | { kind: "strokes"; layer: string; frame: number; indices: number[]; box: [number, number, number, number] }
   | { kind: "layer"; layer: string; box: [number, number, number, number]; pivot: Pt };
 
-type Mode = "move" | "scale" | "rotate";
+type Mode = "move" | "scale" | "rotate" | "pivot";
 let drag: { target: Target; mode: Mode; start: Pt; centerScene: Pt; base: SceneSpec } | null = null;
 
 /** What the transform tool acts on: the selection if it is on the visible frame, else the selected layer. */
@@ -34,9 +34,18 @@ export function targetOf(spec: SceneSpec, frameNo: number): Target | null {
   }
   // object layers: box around what the object draws on this frame, pivot at its center
   const time = frameNo / spec.meta.fps;
-  const box = objectBounds(spec, l, time, defaultFactory);
-  if (!box) return null;
+  // a rig group draws nothing itself: its box is everything parented under it (in its own, untransformed space)
+  const parts = l.type === "group" ? spec.layers.filter((x) => isUnder(spec, x.id, l.id)) : [l];
+  const boxes = parts.map((x) => objectBounds(spec, x, time, defaultFactory)).filter((b) => !!b);
+  if (!boxes.length) return null;
+  const box: [number, number, number, number] = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
   return { kind: "layer", layer: l.id, box, pivot: layerPivot(spec, l, defaultFactory) };
+}
+
+/** Whether layer `id` sits (at any depth) under rig parent `root`. */
+function isUnder(spec: SceneSpec, id: string, root: string) {
+  for (let l = findLayer(spec, id), n = 0; l?.parent && n < spec.layers.length; l = findLayer(spec, l.parent), n++) if (l.parent === root) return true;
+  return false;
 }
 
 export function handles(t: Target, c: Pick<ToolContext, "fromLayer" | "unitsPerPx">) {
@@ -59,7 +68,8 @@ export const transformTool: ToolController = {
     if (s.locked[target.layer]) return c.toast("Layer is locked", "Unlock it in the Layers docker to transform it.");
     const h = handles(target, c);
     const near = (p: Pt) => Math.hypot(p[0] - c.scene[0], p[1] - c.scene[1]) < 10 * c.unitsPerPx;
-    const mode: Mode = near(h.rot) ? "rotate" : h.corners.some(near) ? "scale" : "move";
+    // the small pivot ring moves the pivot itself (the point the layer turns about)
+    const mode: Mode = near(h.rot) ? "rotate" : h.corners.some(near) ? "scale" : target.kind === "layer" && Math.hypot(h.center[0] - c.scene[0], h.center[1] - c.scene[1]) < 5 * c.unitsPerPx ? "pivot" : "move";
     s.beginGesture();
     drag = { target, mode, start: c.scene, centerScene: h.center, base: c.spec };
   },
@@ -77,11 +87,13 @@ export const transformTool: ToolController = {
         !target.indices.includes(i) ? st : mode === "move" ? transformStroke(st, b[0] - a[0], b[1] - a[1], 1, 0, center) : mode === "scale" ? transformStroke(st, 0, 0, k, 0, center) : transformStroke(st, 0, 0, 1, ang, center),
       );
       s.preview(setStrokes(base, target.layer, target.frame, strokes));
+    } else if (mode === "pivot") {
+      s.preview(mapLayer(base, target.layer, (l) => ({ ...l, pivot: c.toLayer(target.layer, c.scene).map((v) => Math.round(v)) as Pt })));
     } else {
       const l = findLayer(base, target.layer)!;
       const cur = resolve({ x: 0, y: 0, rotation: 0, scale: 1, ...l.transform }, base, c.time);
-      // scene delta → the layer's parent space (undo the camera)
-      const cam = invert(layerMatrix(base, null, c.time));
+      // scene delta → the layer's parent space (undo the camera and any rig parents)
+      const cam = invert(layerMatrix(base, findLayer(base, l.parent ?? null), c.time));
       const [ox, oy] = apply(cam, start[0], start[1]), [nx, ny] = apply(cam, c.scene[0], c.scene[1]);
       const values = mode === "move" ? { x: cur.x + nx - ox, y: cur.y + ny - oy } : mode === "scale" ? { scale: cur.scale * k } : { rotation: cur.rotation + ang };
       s.preview(setTransform(base, target.layer, values, c.frame, s.autoKey));
@@ -92,7 +104,7 @@ export const transformTool: ToolController = {
     const { mode, target } = drag;
     drag = null;
     const s = useStudio.getState();
-    s.endGesture(`${mode === "move" ? "Move" : mode === "scale" ? "Scale" : "Rotate"} ${target.kind === "strokes" ? "selection" : target.layer}`);
+    s.endGesture(`${mode === "move" ? "Move" : mode === "scale" ? "Scale" : mode === "pivot" ? "Move pivot of" : "Rotate"} ${target.kind === "strokes" ? "selection" : target.layer}`);
   },
   overlay(g: Ctx2D, c) {
     const target = targetOf(c.spec, c.frame);
@@ -110,6 +122,9 @@ export const transformTool: ToolController = {
       g.fill(); g.stroke();
     }
     g.beginPath(); g.arc(h.center[0], h.center[1], 3 * c.unitsPerPx, 0, Math.PI * 2); g.stroke();
+    // pivot crosshair: drag it to move the point the layer turns about
+    const k = 7 * c.unitsPerPx;
+    g.beginPath(); g.moveTo(h.center[0] - k, h.center[1]); g.lineTo(h.center[0] + k, h.center[1]); g.moveTo(h.center[0], h.center[1] - k); g.lineTo(h.center[0], h.center[1] + k); g.stroke();
     g.restore();
   },
 };

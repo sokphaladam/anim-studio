@@ -14,9 +14,11 @@ import type { Pt, ToolContext, ToolController } from "../tools/types";
 
 const TOOLS: Record<Tool, ToolController> = { brush: brushTool, eraser: eraserTool, fill: fillTool, shapes: shapesTool, transform: transformTool, select: selectTool, eyedropper: eyedropperTool };
 
-/** Spec with hidden rows removed (visibility is editor state, not part of the scene). */
+/** Spec with hidden rows removed (visibility is editor state, not part of the scene). Hiding a rig parent hides its parts. */
 export function visibleSpec(spec: SceneSpec, hidden: Record<string, boolean>): SceneSpec {
-  return { ...spec, layers: spec.layers.filter((l) => !hidden[l.id]), overlays: spec.overlays.filter((_, i) => !hidden[overlayKey(i)]) };
+  const parent = new Map(spec.layers.map((l) => [l.id, l.parent]));
+  const shown = (id: string | undefined, n = 0): boolean => id === undefined || n > spec.layers.length || (!hidden[id] && shown(parent.get(id), n + 1));
+  return { ...spec, layers: spec.layers.filter((l) => shown(l.id)), overlays: spec.overlays.filter((_, i) => !hidden[overlayKey(i)]) };
 }
 
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();

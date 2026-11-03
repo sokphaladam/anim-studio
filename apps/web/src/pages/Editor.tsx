@@ -2,6 +2,7 @@ import { CommandPalette, MenuBar, ShortcutSheet, useToast } from "@anim/ui";
 import type { DockviewApi, IDockviewPanelProps } from "dockview-react";
 import { useEffect, useMemo, useRef, type FunctionComponent } from "react";
 import { CanvasView } from "../canvas/CanvasView";
+import { ExportDialog } from "../components/ExportDialog";
 import { AIAssistantDocker } from "../dockers/AIAssistant";
 import { BrushPresetsDocker } from "../dockers/BrushPresets";
 import { ColorDocker } from "../dockers/ColorDocker";
@@ -119,6 +120,7 @@ export function Editor() {
         </main>
       </div>
       <CommandPalette open={ui.palette} onOpenChange={(o) => set({ ui: { ...ui, palette: o } })} menus={menus} />
+      <ExportDialog open={ui.export} onOpenChange={(o) => set({ ui: { ...ui, export: o } })} />
       <ShortcutSheet
         open={ui.shortcuts}
         onOpenChange={(o) => set({ ui: { ...ui, shortcuts: o } })}

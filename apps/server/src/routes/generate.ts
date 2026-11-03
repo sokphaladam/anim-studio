@@ -1,18 +1,21 @@
-import { generateScene, videoPrompt, VIDEO_SIZE, type AnimateFn, type PaintFn, type Provider } from "@anim/ai";
-import { StyleIdSchema } from "@anim/spec";
+import { AIError, generateLayered, videoPrompt, VIDEO_SIZE, type AnimateFn, type LayeredTools, type Provider } from "@anim/ai";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { cancelJob, getJob, startJob, type JobEvent } from "../jobs";
 
-const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation in a few words").max(2000), duration: z.number().min(5).max(30), aspect: z.enum(["16:9", "9:16", "1:1"]), style: StyleIdSchema.optional(), mode: z.enum(["vector", "painted", "video"]).optional() });
+const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation in a few words").max(2000), duration: z.number().min(5).max(30), aspect: z.enum(["16:9", "9:16", "1:1"]) });
 
-export function generateRoutes(app: FastifyInstance, provider: () => Provider, paint?: PaintFn, animate?: AnimateFn, readImage?: (src: string) => Uint8Array | null) {
+/** Layered generation: its tools, and whether the segmentation models are installed. */
+export type Layered = { tools: LayeredTools; ready: () => Promise<boolean> };
+
+export function generateRoutes(app: FastifyInstance, provider: () => Provider, animate?: AnimateFn, readImage?: (src: string) => Uint8Array | null, layered?: Layered) {
   app.post("/api/generate", async (req, reply) => {
     const r = Body.safeParse(req.body);
     if (!r.success) return reply.code(400).send({ error: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
     const p = provider();
     const jobId = startJob(async (emit, signal) => {
-      await generateScene(r.data, p, (e) => emit(e as JobEvent), signal, paint, animate);
+      if (!layered || !(await layered.ready())) throw new AIError("Generating needs the image painter and its segmentation models", "Run pnpm setup:painter --layered (about 11 GB the first time).");
+      await generateLayered(r.data, p, layered.tools, (e) => emit(e as JobEvent), signal);
     });
     return { jobId };
   });
@@ -32,7 +35,7 @@ export function generateRoutes(app: FastifyInstance, provider: () => Provider, p
       say();
       const tick = setInterval(say, 15_000);
       try {
-        const clip = await animate({ image: png, positive: videoPrompt(r.data.motion, r.data.scene, "anime"), negative: "static image, still frame, blurry, distorted face, deformed hands, morphing, flickering, jitter, low quality, watermark, text", width, height, frames: 121, fps: 24, seed: Math.floor(Math.random() * 2 ** 31) }, signal);
+        const clip = await animate({ image: png, positive: videoPrompt(r.data.motion, r.data.scene), negative: "static image, still frame, blurry, distorted face, deformed hands, morphing, flickering, jitter, low quality, watermark, text", width, height, frames: 121, fps: 24, seed: Math.floor(Math.random() * 2 ** 31) }, signal);
         emit({ type: "footage", footage: clip });
       } finally {
         clearInterval(tick);

@@ -44,3 +44,13 @@ it("downloads a missing model in the background and reports progress", async () 
   release();
   await expect.poll(async () => (await health()).ok).toBe(true);
 });
+
+it("with the opt-in cloud fallback, a stopped Ollama reports the cloud model standing in", async () => {
+  const cfg = { provider: "ollama" as const, ollamaUrl: "http://127.0.0.1:9", ollamaModel: "m:1b", fallback: { baseUrl: "https://x", apiKey: "k", model: "cloud-m, other" } };
+  const on = buildApp({ config: { ...cfg, useFallback: true }, store: createStore(":memory:") });
+  const off = buildApp({ config: cfg, store: createStore(":memory:") });
+  on.log.level = off.log.level = "silent";
+  expect((await on.inject({ url: "/api/health" })).json()).toMatchObject({ ok: true, provider: "openai-compatible", message: "Cloud AI standing in: cloud-m" });
+  expect((await off.inject({ url: "/api/health" })).json()).toMatchObject({ ok: false, provider: "ollama" });
+  await Promise.all([on.close(), off.close()]);
+});

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "meta": { "title": "Snowy owl", "subtitle": "winter night loop, 12 seconds", "duration": 12, "fps": 30, "width": 1280, "height": 720 },
+  "palette": { "skyTop": "#0b1530", "skyLow": "#2c3f6b", "snow": "#f4f7ff", "owl": "#8a6a4f", "branch": "#3b2a22" },
+  "tracks": {
+    "fade": { "keys": [[0, 0], [1, 1], [11, 1], [12, 0]] },
+    "snowfall": { "keys": [[0, 0.6], [6, 1.4], [12, 0.6]] }
+  },
+  "layers": [
+    { "id": "sky", "type": "night-sky", "params": { "top": "$skyTop", "bottom": "$skyLow", "horizon": 720 } },
+    { "id": "clouds", "type": "clouds", "params": { "y0": 60, "y1": 240, "count": 6, "opacity": 0.35, "color": "#c9d4f0", "period": 12 } },
+    { "id": "owl", "type": "owl", "params": { "x": 760, "y": 470, "scale": 1.6, "color": "$owl", "branch": "$branch", "blinkEvery": 4, "tiltEvery": 6 } },
+    { "id": "snow", "type": "snow", "params": { "intensity": "@snowfall", "color": "$snow", "period": 6 } }
+  ],
+  "overlays": [
+    { "type": "vignette", "params": { "strength": 0.45 } },
+    { "type": "fade", "params": { "reveal": "@fade" } }
+  ],
+  "beats": [
+    { "at": 0, "label": "Quiet night", "note": "light snow, the owl watches" },
+    { "at": 6, "label": "Heavier snow", "note": "snowfall peaks, then eases off to loop" }
+  ]
+}

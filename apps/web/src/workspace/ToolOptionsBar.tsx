@@ -16,7 +16,7 @@ function Swatch() {
   );
 }
 
-const Hint = ({ children }: { children: string }) => <span className="ml-auto truncate text-micro text-fg-3">{children}</span>;
+const Hint = ({ children }: { children: string }) => <span className="ml-auto truncate text-micro text-fg-3" title={children}>{children}</span>;
 
 export function ToolOptionsBar() {
   const { tool, brush, eraserSize, shape, selectMode, autoKey, set } = useStudio(

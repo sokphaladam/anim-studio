@@ -3,6 +3,8 @@ import type { SceneSpec } from "@anim/spec";
 import autumn from "@anim/spec/examples/autumn-window.json";
 import ball from "@anim/spec/examples/bouncing-ball.json";
 import nightStudy from "@anim/spec/examples/night-study.json";
+import readingRoom from "@anim/spec/examples/reading-room.json";
+import snowyOwl from "@anim/spec/examples/snowy-owl.json";
 
 export type Aspect = "16:9" | "9:16" | "1:1";
 export const ASPECTS: Record<Aspect, { label: string; hint: string; width: number; height: number }> = {
@@ -21,6 +23,8 @@ export const EXAMPLES: { id: string; title: string; load: () => SceneSpec }[] = 
   { id: "autumn-window", title: "Autumn window", load: () => mustValidate(autumn) },
   { id: "night-study", title: "Night study (rainy balcony)", load: () => mustValidate(nightStudy) },
   { id: "bouncing-ball", title: "Bouncing ball (hand-drawn)", load: () => mustValidate(ball) },
+  { id: "snowy-owl", title: "Snowy owl (winter night)", load: () => mustValidate(snowyOwl) },
+  { id: "reading-room", title: "Reading room (summer dusk)", load: () => mustValidate(readingRoom) },
 ];
 
 /** A white page with one empty drawing layer, ready to draw on. */

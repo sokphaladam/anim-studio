@@ -59,7 +59,7 @@ export function NumberField({ label, value, onChange, min = -Infinity, max = Inf
         >
           {label}
         </label>
-        <div className={cx("ml-auto flex h-7 items-center rounded-sm border bg-raised px-2 transition-ui focus-within:border-line-strong", error ? "border-danger" : "border-transparent")}>
+        <div className={cx("ml-auto flex h-7 items-center rounded-sm border bg-raised px-2 transition-ui focus-within:border-accent", error ? "border-danger" : "border-transparent")}>
           <input
             id={id}
             inputMode="decimal"

@@ -11,7 +11,7 @@
   --border-strong: #44424c;
   --text-1: #ecebef;
   --text-2: #a8a5b1;
-  --text-3: #72707b;
+  --text-3: #8f8d98; /* lightened from #72707b to meet WCAG AA (4.5:1) on raised inputs */
   --accent: #f2a93b;
   --accent-hover: #ffbd5a;
   --accent-ink: #1a1206;

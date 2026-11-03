@@ -25,6 +25,14 @@ const scene = (strokes: unknown[]) => {
 };
 
 describe("drawing layers", () => {
+  it("every brush preset paints its own way", () => {
+    // pressure varies along the line so thinning shows
+    const line = Array.from({ length: 30 }, (_, i) => [20 + i * 5, 100 + Math.sin(i / 3) * 20, 0.2 + (i % 10) / 12] as [number, number, number]);
+    const look = (preset: string) => hashes(scene([{ tool: "brush", preset, color: "#203040", size: 14, points: line }]), [0], undefined, [200, 200])[0];
+    const all = ["pencil", "ink", "brush-pen", "marker", "wash", "airbrush"].map(look);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
   it("holds a frame until the next one starts", () => {
     const f = [{ start: 0, strokes: [] }, { start: 0.5, strokes: [] }];
     expect([frameIndexAt(f, 0), frameIndexAt(f, 0.49), frameIndexAt(f, 0.5), frameIndexAt(f, 0.9)]).toEqual([0, 0, 1, 1]);

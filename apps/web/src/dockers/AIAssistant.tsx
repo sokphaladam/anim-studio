@@ -1,24 +1,72 @@
 import { Button, EmptyState, StatusPill, Toggle, cx } from "@anim/ui";
-import { LoaderCircle, Send, Sparkles, X } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Minus, Send, Sparkles, X } from "lucide-react";
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useAIStatus } from "../components/useAIStatus";
 import { useStudio } from "../store";
-import { aspectOf, cancelGeneration, editWithAI, generate, type Generation } from "../store/ai";
+import { LAYERED_STAGES, aspectOf, cancelGeneration, editWithAI, generate, type AssetStatus, type Generation } from "../store/ai";
 
-const PHASE_LABEL = { storyboard: "Planning storyboard", paint: "Painting the scene (about a minute)", video: "Animating frame by frame (5–10 min)", spec: "Writing scene", repair: "Repairing scene", edit: "Editing scene" } as const;
+const PHASE_LABEL = {
+  storyboard: "Planning storyboard",
+  paint: "Painting the scene (about a minute)",
+  video: "Animating frame by frame (5–10 min)",
+  spec: "Writing scene",
+  repair: "Repairing scene",
+  edit: "Editing scene",
+  plan: "Planning layers and actions",
+  background: "Painting the background",
+  character: "Painting the character",
+  segment: "Separating parts",
+  reconstruct: "Rebuilding hidden areas",
+  rig: "Rigging parts",
+  props: "Painting props",
+  animate: "Keyframing actions",
+  validate: "Checking layers",
+} as const;
+const LAYERED = new Set<string>(LAYERED_STAGES);
+const ASSET_ICON = { running: LoaderCircle, done: Check, review: CircleAlert, skipped: Minus, failed: X } as const;
+const ASSET_TONE = { running: "text-accent", done: "text-success", review: "text-warning", skipped: "text-fg-3", failed: "text-danger" } as const;
+
+function AssetRow({ a }: { a: AssetStatus }) {
+  const Icon = ASSET_ICON[a.status];
+  return (
+    <li className="flex min-w-0 items-center gap-1.5" title={a.message ? `${a.label}: ${a.message}` : a.label}>
+      <Icon size={12} strokeWidth={1.5} aria-hidden className={cx("shrink-0", ASSET_TONE[a.status], a.status === "running" && "animate-spin motion-reduce:animate-none")} />
+      <span className="truncate">{a.label}</span>
+      <span className="ml-auto shrink-0 text-fg-3">{a.status === "review" ? "check" : a.status}</span>
+    </li>
+  );
+}
 
 function Progress({ g }: { g: Generation }) {
+  const layered = LAYERED.has(g.phase);
+  const at = LAYERED_STAGES.indexOf(g.phase as (typeof LAYERED_STAGES)[number]);
   return (
-    <div role="status" className="flex items-center gap-2 rounded-md border border-line bg-raised p-2 text-sm">
-      <LoaderCircle size={16} strokeWidth={1.5} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-fg">{g.phase === "repair" ? g.message : PHASE_LABEL[g.phase]}</div>
-        <div className="font-mono text-micro text-fg-3">{g.tokens ? `${g.tokens.toLocaleString()} tokens` : "waiting for the model…"}</div>
+    <div role="status" className="flex flex-col gap-2 rounded-md border border-line bg-raised p-2 text-sm">
+      <div className="flex items-center gap-2">
+        <LoaderCircle size={16} strokeWidth={1.5} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-fg" title={g.message}>{g.phase === "repair" || layered ? g.message : PHASE_LABEL[g.phase]}</div>
+          <div className="font-mono text-micro text-fg-3">{layered ? `Step ${at + 1} of ${LAYERED_STAGES.length}: ${PHASE_LABEL[g.phase]}` : g.tokens ? `${g.tokens.toLocaleString()} tokens` : "waiting for the model…"}</div>
+        </div>
+        <Button size={28} variant="ghost" icon={<X size={14} strokeWidth={1.5} />} onClick={cancelGeneration}>
+          Cancel
+        </Button>
       </div>
-      <Button size={28} variant="ghost" icon={<X size={14} strokeWidth={1.5} />} onClick={cancelGeneration}>
-        Cancel
-      </Button>
+      {layered && (
+        <ol aria-label="Layered generation stages" className="flex gap-0.5">
+          {LAYERED_STAGES.map((s, i) => (
+            <li key={s} title={PHASE_LABEL[s]} aria-current={i === at ? "step" : undefined} className={cx("h-1 flex-1 rounded-full", i < at ? "bg-success" : i === at ? "bg-accent" : "bg-hover")}>
+              <span className="sr-only">{`${PHASE_LABEL[s]}: ${i < at ? "done" : i === at ? "in progress" : "waiting"}`}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {!!g.assets?.length && (
+        <ul aria-label="Assets" className="flex max-h-20 flex-col gap-0.5 overflow-auto font-mono text-micro text-fg-2">
+          {g.assets.map((a) => <AssetRow key={a.id} a={a} />)}
+        </ul>
+      )}
     </div>
   );
 }
@@ -41,8 +89,7 @@ export const AIAssistantDocker = forwardRef<HTMLTextAreaElement>(function AIAssi
     const spec = useStudio.getState().spec;
     if (text.trim().length < 3 || running) return;
     if (editing) editWithAI(text.trim());
-    // a new scene keeps the current scene's art style and look, so a project stays one film
-    else generate({ prompt: text.trim(), duration: spec ? spec.meta.duration : 12, aspect: spec ? aspectOf(spec) : "16:9", style: spec?.meta.style, mode: spec?.layers.some((l) => l.type === "footage") ? "video" : spec?.layers.some((l) => l.type === "painting") ? "painted" : "vector" }, false);
+        else generate({ prompt: text.trim(), duration: spec ? spec.meta.duration : 12, aspect: spec ? aspectOf(spec) : "16:9" }, false);
     setText("");
   };
 
@@ -108,13 +155,13 @@ export const AIAssistantDocker = forwardRef<HTMLTextAreaElement>(function AIAssi
           }}
           placeholder={editing ? "Say what to change… e.g. make the leaves fall faster" : "Describe a scene…"}
           aria-describedby="ai-note"
-          className="w-full resize-none rounded-sm border border-transparent bg-raised p-2 text-base outline-none placeholder:text-fg-3 focus:border-line-strong"
+          className="w-full resize-none rounded-sm border border-transparent bg-raised p-2 text-base outline-none placeholder:text-fg-3 focus:border-accent"
         />
         <div className="flex items-center justify-between gap-2">
           <Toggle pressed={!editing} onPressedChange={setNewScene} disabled={!canEdit} label={editing ? "Build a whole new scene instead of editing this one" : "Edit the current scene instead"}>
             New scene
           </Toggle>
-          <span id="ai-note" className="min-w-0 flex-1 truncate text-micro text-fg-3">
+          <span id="ai-note" className="min-w-0 flex-1 truncate text-micro text-fg-3" title={`Enter sends · ${editing ? "changes scene" : "replaces scene"} · Ctrl+Z undoes`}>
             Enter sends · {editing ? "changes this scene" : "replaces the scene"} · Ctrl+Z undoes
           </span>
           <Button type="submit" size={28} variant="primary" disabled={running || text.trim().length < 3} icon={<Send size={14} strokeWidth={1.5} />}>

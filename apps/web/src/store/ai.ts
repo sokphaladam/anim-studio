@@ -1,10 +1,12 @@
-import type { SceneSpec, StyleId } from "@anim/spec";
+import type { SceneSpec } from "@anim/spec";
 import { useStudio } from ".";
 import { requestEdit, saveProject } from "./projects";
 import { overlayKey } from "./scenes";
 
-export type Phase = "storyboard" | "paint" | "video" | "spec" | "repair" | "edit";
-export type Mode = "vector" | "painted" | "video";
+/** Layered generation's stages, in pipeline order. */
+export const LAYERED_STAGES = ["plan", "background", "character", "segment", "reconstruct", "rig", "props", "animate", "validate"] as const;
+export type Phase = "storyboard" | "paint" | "video" | "spec" | "repair" | "edit" | (typeof LAYERED_STAGES)[number];
+export type AssetStatus = { id: string; label: string; status: "running" | "done" | "review" | "skipped" | "failed"; message?: string };
 export type Generation = {
   jobId: string | null;
   status: "running" | "done" | "error" | "cancelled";
@@ -12,6 +14,8 @@ export type Generation = {
   tokens: number;
   message: string;
   attempt: number;
+  /** Layered mode: each asset as it is painted and separated. */
+  assets?: AssetStatus[];
 };
 export type ChatMessage = { role: "user" | "assistant"; text: string; tone?: "error" | "success"; details?: string[] };
 
@@ -37,13 +41,13 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
  * Asks the server to generate a scene and follows its progress over SSE. The storyboard's beats land on the
  * timeline first; the finished scene replaces the current one as an undoable step.
  */
-export async function generate(req: { prompt: string; duration: number; aspect: Aspect; style?: StyleId; mode?: Mode }, fromWelcome: boolean) {
+export async function generate(req: { prompt: string; duration: number; aspect: Aspect }, fromWelcome: boolean) {
   const s = useStudio.getState();
   if (s.generation?.status === "running") return;
   const [width, height] = SIZE[req.aspect];
   const duration = Math.min(30, Math.max(5, Math.round(req.duration)));
   if (fromWelcome || !s.spec) {
-    s.open({ version: 1, meta: { title: req.prompt.slice(0, 40), style: req.style, duration, fps: 30, width, height }, palette: {}, tracks: {}, layers: [], overlays: [], beats: [] });
+    s.open({ version: 1, meta: { title: req.prompt.slice(0, 40), duration, fps: 30, width, height }, palette: {}, tracks: {}, layers: [], overlays: [], beats: [] });
     useStudio.getState().set({ chat: [] });
   }
   say({ role: "user", text: req.prompt });
@@ -68,6 +72,19 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
   const on = <T>(type: string, fn: (d: T) => void) => es.addEventListener(type, (ev) => fn(JSON.parse((ev as MessageEvent).data) as T));
 
   on<{ phase: Phase; message: string }>("status", (d) => update({ phase: d.phase, message: d.message, tokens: 0 }));
+  // layered: the plan and each asset are reported as they arrive; the scene itself only changes on "done"
+  on<{ plan: { title: string; mood: string; beats: SceneSpec["beats"]; characters: { id: string }[]; props: { id: string }[]; actions: { who: string; target: string; start: number; end: number }[] } }>("plan", ({ plan }) => {
+    say({
+      role: "assistant",
+      text: `Plan: “${plan.title}” — layers for ${[...plan.characters.map((c) => c.id), ...plan.props.map((p) => p.id)].join(", ")} over a separate background`,
+      details: [...plan.beats.map((b) => `${b.at}s · ${b.label}`), ...plan.actions.map((a) => `${a.start}–${a.end}s · ${a.who} looks at ${a.target}`)],
+    });
+  });
+  on<AssetStatus>("asset", (d) => {
+    const list = useStudio.getState().generation?.assets ?? [];
+    const a: AssetStatus = { id: d.id, label: d.label, status: d.status, message: d.message };
+    update({ assets: list.some((x) => x.id === d.id) ? list.map((x) => (x.id === d.id ? a : x)) : [...list, a] });
+  });
   on<{ phase: Phase; tokens: number }>("token", (d) => update({ tokens: d.tokens }));
   on<{ storyboard: { title: string; mood: string; palette: Record<string, string>; beats: SceneSpec["beats"] }; meta: SceneSpec["meta"] }>("storyboard", (d) => {
     const st = useStudio.getState();
@@ -88,10 +105,11 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
   on<{ spec: SceneSpec; repairs: number }>("done", (d) => {
     const st = useStudio.getState();
     st.commit("AI scene", d.spec);
-    st.set({ aiMarks: marksFor(d.spec), t: 0, playing: true });
+    st.set({ aiMarks: marksFor(d.spec), t: 0, playing: true, hidden: {}, locked: {}, selected: null, selection: null });
     update({ status: "done", message: "Done" });
     saveProject("AI scene").catch(() => {}); // autosave retries
-    say({ role: "assistant", tone: "success", text: `Built ${d.spec.layers.length} layers${d.repairs ? ` (fixed after ${d.repairs} repair${d.repairs > 1 ? "s" : ""})` : ""}. Playing it now — undo (Ctrl+Z) to go back.` });
+    const review = Object.entries(d.spec.assets ?? {}).filter(([, a]) => a.review).map(([id, a]) => `${id}: ${a.review}`);
+    say({ role: "assistant", tone: "success", text: `Built ${d.spec.layers.length} layers${d.repairs ? ` (fixed after ${d.repairs} repair${d.repairs > 1 ? "s" : ""})` : ""}. Playing it now — undo (Ctrl+Z) to go back.${review.length ? " Please check the flagged parts:" : ""}`, details: review.length ? review : undefined });
   });
   on<{ message: string; fix?: string; errors?: string[] }>("error", (d) => {
     if (useStudio.getState().generation?.status === "cancelled") return;

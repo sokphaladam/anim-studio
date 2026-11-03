@@ -37,10 +37,17 @@ export function objectBounds(spec: SceneSpec, layer: Layer, t: number, make: Can
 const pivotCache = new WeakMap<object, { key: string; pivot: [number, number] }>();
 
 /**
- * Point a layer rotates and scales around. Drawings: center of everything drawn. Objects: center of the area they
+ * Point a layer rotates and scales around: its explicit `pivot` if set. Drawings: center of everything drawn. Objects: center of the area they
  * cover over the whole scene (sampled at 5 times), so it stays put while the object animates.
  */
 export function layerPivot(spec: SceneSpec, layer: Layer, make: CanvasFactory): [number, number] {
+  if (layer.pivot) return layer.pivot;
+  // an image layer's area is in its params: no need to render it
+  const p = layer.params;
+  if (layer.type === "image" && typeof p.w === "number" && typeof p.h === "number") {
+    const x = typeof p.x === "number" ? p.x : 0, y = typeof p.y === "number" ? p.y : 0;
+    return [x + p.w / 2, y + p.h / 2];
+  }
   if (layer.type === "drawing") return drawingPivot(layer) ?? [0, 0];
   const key = `${spec.meta.width}x${spec.meta.height}/${spec.meta.duration}`;
   const hit = pivotCache.get(layer.params);

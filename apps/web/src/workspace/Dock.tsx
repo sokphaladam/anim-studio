@@ -13,7 +13,8 @@ export function defaultLayout(api: DockviewApi, title: string) {
   api.addPanel({ id: "history", component: "history", title: "History", position: { referencePanel: layers, direction: "within" } });
   layers.api.setActive();
   api.addPanel({ id: "ai", component: "ai", title: "AI assistant", position: { referencePanel: layers, direction: "below" } });
-  const timeline = api.addPanel({ id: "timeline", component: "timeline", title: "Timeline", position: { direction: "below" } });
+  // under the canvas only, so the dockers on the right get the full height (at 1366×768 a full-width timeline left Layers ~3 rows)
+  const timeline = api.addPanel({ id: "timeline", component: "timeline", title: "Timeline", position: { referencePanel: canvas, direction: "below" } });
   color.api.setActive();
   color.api.setSize({ width: 300 });
   timeline.api.setSize({ height: 260 });

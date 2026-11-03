@@ -1,15 +1,15 @@
 import { useShallow } from "zustand/react/shallow";
 import { getObject } from "@anim/engine";
 import { Button, ContextMenu, Dropdown, EmptyState, IconButton, NumberField, cx } from "@anim/ui";
-import { Eye, EyeOff, Layers as LayersIcon, Lock, LockOpen, Sparkles, SquareStack, User, Image, Box, Wind, Type, Sparkle, Brush, Plus, Trash2, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, Layers as LayersIcon, Lock, LockOpen, Sparkles, SquareStack, User, Users, Image, Box, Wind, Type, Sparkle, Brush, Plus, Trash2, ChevronDown, CircleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useStudio } from "../store";
-import { deleteLayer, findLayer, moveLayer, renameLayer, setParam } from "../store/edit";
+import { deleteLayer, findLayer, mapLayer, moveLayer, renameLayer, setParam } from "../store/edit";
 import { addDrawingLayer } from "../workspace/frameActions";
 import { isAIRow, rowsOf } from "./Timeline";
 
 const ICON = { size: 16, strokeWidth: 1.5 } as const;
-const CATEGORY_ICON = { backgrounds: Image, props: Box, characters: User, particles: Wind, fx: Sparkle, text: Type, drawing: Brush } as const;
+const CATEGORY_ICON = { backgrounds: Image, props: Box, characters: User, particles: Wind, fx: Sparkle, text: Type, drawing: Brush, images: Image, groups: Users } as const;
 const BLEND_LABEL = { normal: "Normal", multiply: "Multiply", screen: "Screen", add: "Add" } as const;
 
 function RenameField({ initial, taken, onDone }: { initial: string; taken: (id: string) => boolean; onDone: (id: string | null) => void }) {
@@ -42,6 +42,16 @@ export function LayersDocker() {
   const [dragging, setDragging] = useState<string | null>(null);
   if (!spec) return null;
   const sel = findLayer(spec, selected);
+  // rig depth: parts are indented under their parent
+  const depth = (id: string) => {
+    let d = 0;
+    for (let l = findLayer(spec, id); l?.parent && d < spec.layers.length; l = findLayer(spec, l.parent)) d++;
+    return d;
+  };
+  const reviewOf = (id: string) => {
+    const l = findLayer(spec, id);
+    return l?.type === "image" ? spec.assets?.[String(l.params.asset)]?.review : undefined;
+  };
   const toolbar = (
     <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line px-1">
       <IconButton label="New drawing layer" shortcut="Ctrl+Shift+N" icon={<Plus {...ICON} />} onClick={addDrawingLayer} />
@@ -75,6 +85,7 @@ export function LayersDocker() {
     <ul role="listbox" aria-label="Layers" className="min-h-0 flex-1 overflow-auto py-1">
       {rows.map((r) => {
         const Icon = CATEGORY_ICON[getObject(r.type)?.category ?? "props"] ?? Box;
+        const review = r.overlay ? undefined : reviewOf(r.key);
         return (
           <ContextMenu
             key={r.key}
@@ -103,6 +114,7 @@ export function LayersDocker() {
                 hidden[r.key] && "opacity-60",
                 dragging === r.key && "opacity-40",
               )}
+              style={r.overlay ? undefined : { paddingLeft: `calc(var(--space-1) + ${depth(r.key)} * var(--space-3))` }}
             >
               <IconButton size={28} label={hidden[r.key] ? "Show layer" : "Hide layer"} shortcut="H" icon={hidden[r.key] ? <EyeOff {...ICON} /> : <Eye {...ICON} />} onClick={(e) => (e.stopPropagation(), set({ hidden: { ...hidden, [r.key]: !hidden[r.key] } }))} />
               <Icon size={14} strokeWidth={1.5} className="shrink-0 text-fg-3" aria-hidden />
@@ -112,6 +124,11 @@ export function LayersDocker() {
                 <span className="min-w-0 flex-1 truncate" title={`${r.label} (${r.type})`}>
                   {r.label}
                   <span className="ml-1.5 text-micro text-fg-3">{r.type}</span>
+                </span>
+              )}
+              {review && (
+                <span className="shrink-0 text-warning" title={`Check this layer: ${review}`}>
+                  <CircleAlert size={12} strokeWidth={1.5} aria-label={`Check this layer: ${review}`} />
                 </span>
               )}
               {isAIRow(r, aiMarks) && <Sparkles size={12} strokeWidth={1.5} className="shrink-0 text-accent" aria-label="Made by AI" />}
@@ -129,6 +146,24 @@ export function LayersDocker() {
       })}
     </ul>
     {sel?.type === "drawing" && <DrawingProps layer={sel.id} params={sel.params} />}
+    {sel?.pivot && <PivotProps layer={sel.id} pivot={sel.pivot} />}
+    </div>
+  );
+}
+
+/** The rigged part's pivot (the point it turns about), in scene units. Also draggable on the canvas with the transform tool. */
+function PivotProps({ layer, pivot }: { layer: string; pivot: [number, number] }) {
+  const commit = useStudio((s) => s.commit);
+  const spec = useStudio((s) => s.spec)!;
+  const setPivot = (i: 0 | 1, v: number) => {
+    const p: [number, number] = [...pivot];
+    p[i] = v;
+    commit(`Pivot of ${layer}`, mapLayer(spec, layer, (l) => ({ ...l, pivot: p })), { merge: true });
+  };
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-t border-line px-2 py-1">
+      <NumberField className="min-w-0 flex-1" label="Pivot X" value={Math.round(pivot[0])} step={1} onChange={(v) => setPivot(0, v)} />
+      <NumberField className="min-w-0 flex-1" label="Pivot Y" value={Math.round(pivot[1])} step={1} onChange={(v) => setPivot(1, v)} />
     </div>
   );
 }

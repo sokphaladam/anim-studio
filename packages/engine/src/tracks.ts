@@ -8,9 +8,11 @@ export const EASE: Record<Ease, (k: number) => number> = {
   step: (k) => (k < 1 ? 0 : 1),
 };
 
-/** Track value at time t; holds the first/last key outside the keyed range. */
+/** Track value at time t; holds the first/last key outside the keyed range. A looping track repeats its keys. */
 export function evalTrack(track: Track, t: number): number {
   const keys = track.keys;
+  const period = keys[keys.length - 1][0];
+  if (track.loop && period > 0) t = ((t % period) + period) % period;
   if (t <= keys[0][0]) return keys[0][1];
   const ease = EASE[track.ease];
   for (let i = 1; i < keys.length; i++) {

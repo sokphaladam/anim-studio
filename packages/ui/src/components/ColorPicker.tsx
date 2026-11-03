@@ -100,7 +100,7 @@ export function ColorPicker({ value, onChange, recent = [], onEyedropper, classN
         <input
           aria-label="Hex color"
           aria-invalid={error}
-          className={cx("h-7 min-w-0 flex-1 rounded-sm border bg-raised px-2 font-mono text-sm outline-none focus:border-line-strong", error ? "border-danger" : "border-transparent")}
+          className={cx("h-7 min-w-0 flex-1 rounded-sm border bg-raised px-2 font-mono text-sm outline-none focus:border-accent", error ? "border-danger" : "border-transparent")}
           value={hex}
           onChange={(e) => {
             setHex(e.target.value);

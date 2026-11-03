@@ -1,5 +1,5 @@
 // Installs the local image painter: ComfyUI (Windows portable, NVIDIA) + the Animagine XL 4.0 checkpoint (~10 GB total).
-// Usage: pnpm setup:painter [--video]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
+// Usage: pnpm setup:painter [--video] [--layered]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -88,6 +88,12 @@ if (process.argv.includes("--video")) {
   await install(`${WAN}/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors`, join(models, "diffusion_models", "wan2.2_ti2v_5B_fp16.safetensors"));
   await install(`${WAN}/vae/wan2.2_vae.safetensors`, join(side, "vae", "wan2.2_vae.safetensors"));
   await install(`${WAN}/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`, join(side, "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"));
+}
+// --layered: layered animation separates characters into parts. SAM 3.1 (~1.75 GB, SAM License) finds a part from a word
+// ("head"); BiRefNet (~0.45 GB, MIT) cuts a subject from its background. ComfyUI ships the nodes for both.
+if (process.argv.includes("--layered")) {
+  await install("https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors", join(models, "checkpoints", "sam3.1_multiplex_fp16.safetensors"));
+  await install("https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors", join(models, "background_removal", "birefnet.safetensors"));
 }
 const extra = [];
 if (process.env.VIDEO_MODELS_DIR) extra.push(`anim_studio:\n  base_path: ${process.env.VIDEO_MODELS_DIR.replaceAll("\\", "/")}\n  vae: vae\n  text_encoders: text_encoders`);

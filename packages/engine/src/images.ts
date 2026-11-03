@@ -19,9 +19,13 @@ export const getImage = (src: string) => images.get(src);
 /** URL of frame i (0-based) of footage stored as <frames>001.jpg, <frames>002.jpg, … */
 export const frameUrl = (frames: string, i: number) => `${frames}${String(i + 1).padStart(3, "0")}.jpg`;
 
-/** Every image a scene refers to (paintings and footage frames), so hosts know what to load before rendering. */
-export function imageSources(spec: { layers: { type: string; params: Record<string, unknown> }[] }): string[] {
+/** Every image a scene refers to (paintings, footage frames and image-layer assets), so hosts know what to load before rendering. */
+export function imageSources(spec: { layers: { type: string; params: Record<string, unknown> }[]; assets?: Record<string, { src: string }> }): string[] {
   return spec.layers.flatMap((l) => {
+    if (l.type === "image" && typeof l.params.asset === "string") {
+      const a = spec.assets?.[l.params.asset];
+      return a ? [a.src] : [];
+    }
     if (l.type === "painting" && typeof l.params.src === "string") return [l.params.src];
     if (l.type === "footage" && typeof l.params.frames === "string" && typeof l.params.count === "number")
       return Array.from({ length: l.params.count }, (_, i) => frameUrl(l.params.frames as string, i));

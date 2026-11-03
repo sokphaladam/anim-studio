@@ -4,7 +4,9 @@ import { useStudio, type BrushPreset } from "../store";
 export const PRESETS: { id: BrushPreset; label: string; size: number; opacity: number; smoothing: number }[] = [
   { id: "pencil", label: "Pencil", size: 3, opacity: 85, smoothing: 20 },
   { id: "ink", label: "Ink pen", size: 6, opacity: 100, smoothing: 50 },
+  { id: "brush-pen", label: "Brush pen", size: 12, opacity: 100, smoothing: 60 },
   { id: "marker", label: "Marker", size: 16, opacity: 70, smoothing: 40 },
+  { id: "wash", label: "Wash", size: 28, opacity: 35, smoothing: 60 },
   { id: "airbrush", label: "Soft airbrush", size: 40, opacity: 25, smoothing: 30 },
 ];
 
@@ -23,7 +25,7 @@ export function BrushPresetsDocker() {
           className={cx("flex h-16 flex-col justify-between rounded-md border p-2 text-left transition-ui", brush.preset === p.id ? "border-accent bg-accent-soft" : "border-line bg-raised hover:bg-hover")}
         >
           <svg viewBox="0 0 100 20" className="h-5 w-full text-fg" aria-hidden>
-            <path d="M4 14 C 25 2, 45 18, 65 8 S 92 6, 96 10" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth={Math.min(10, p.size / 2.5)} opacity={p.opacity / 100} style={p.id === "airbrush" ? { filter: "blur(2px)" } : undefined} />
+            <path d="M4 14 C 25 2, 45 18, 65 8 S 92 6, 96 10" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth={Math.min(10, p.size / 2.5)} opacity={p.opacity / 100} style={p.id === "airbrush" ? { filter: "blur(2px)" } : p.id === "wash" ? { filter: "blur(1px)" } : undefined} />
           </svg>
           <span className="truncate text-sm">{p.label}</span>
         </button>

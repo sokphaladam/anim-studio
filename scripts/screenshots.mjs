@@ -6,10 +6,12 @@ import { launch } from "./browser.mjs";
 const BASE = process.env.APP_URL ?? "http://localhost:5173";
 const out = resolve(process.argv[2] ?? "screenshots");
 mkdirSync(out, { recursive: true });
+// Windows display scaling shrinks the CSS viewport: a 1920×1080 screen at 150% gives the app 1280×720 CSS pixels
 const SIZES = [
   { name: "1366x768", width: 1366, height: 768, scale: 1 },
-  { name: "1366x768@150", width: 1366, height: 768, scale: 1.5 },
+  { name: "1366x768@125", width: 1093, height: 614, scale: 1.25 },
   { name: "1920x1080", width: 1920, height: 1080, scale: 1 },
+  { name: "1920x1080@150", width: 1280, height: 720, scale: 1.5 },
   { name: "2560x1440", width: 2560, height: 1440, scale: 1 },
 ];
 
@@ -46,6 +48,12 @@ for (const s of SIZES) {
   await page.getByRole("menuitem", { name: "File" }).click();
   await page.waitForTimeout(150);
   await shot("menu");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(250);
+
+  await page.keyboard.press("ControlOrMeta+e");
+  await page.waitForTimeout(250);
+  await shot("export");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(250);
 

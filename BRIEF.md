@@ -1,393 +1,211 @@
 # Prompt-to-Animation Tool — Build Brief for AI
 
-Oct 30, 2026 · @sokphaladam
+Oct 31, 2026 · @sokphaladam
 
 ## How to use this brief
 
 Give this whole document to an AI coding agent (Claude Code, Cursor, or similar) as its build instructions. It defines the goal, stack, folder layout, data contract and milestones, so the agent builds one milestone at a time instead of guessing.
 
-1. Create an empty folder, for example `anim-studio`.
-2. Download this doc as Markdown and save it in that folder as `BRIEF.md`.
-3. Save `autumn-window.html` (the 12-second demo) as `reference/autumn-window.html`. It shows the renderer style and the first example scene.
-4. Make sure Ollama is installed and `qwen2.5-coder:14b` is pulled.
-5. Open the agent in that folder and send: **"Read BRIEF.md and reference/autumn-window.html. Build Milestone 1 only, then stop and summarize what you built and how to run it."**
-6. Test it yourself, then ask for the next milestone.
+1. Open the agent from the repository root.
+2. Ask it to read `BRIEF.md`, `README.md`, the current implementation and the Git status before changing anything.
+3. Ask it to build **one milestone only**. Do not ask it to skip unfinished acceptance criteria from earlier milestones.
+4. After implementation, require tests, a summary of changed files, setup/run instructions and known limitations. The agent must stop after that milestone.
+5. Do not commit, push, or change remote repository state unless explicitly asked.
 
-Everything below this section is written to the AI agent.
+Everything below this section is written to the AI coding agent.
 
 ## Project goal
 
-Build **Anim Studio**: a local, Krita-style 2D animation studio that runs in the browser. The user can draw and animate by hand with brushes, layers and a frame timeline, or type a description and let AI build the animation (5–30 seconds), then keep editing either way and export MP4.
+Build **Anim Studio**: a local, Krita-style 2D animation studio with a desktop application and an editable browser-based workspace. The user can draw and animate by hand with brushes, layers and a frame timeline, or describe a scene and let local AI generate artwork and animation structure. The user can keep editing either way and export MP4.
 
-The core design rule: **the AI never draws pixels and never writes rendering code.** The AI writes a JSON *scene spec*. A deterministic TypeScript engine renders that spec on a canvas. This keeps output reliable, editable and exportable frame-exact.
+The core design rule is: **AI may generate artwork and propose scene structure, but it must not replace the editable project or the deterministic renderer.** Language models plan scenes, assets, layers and timed actions. Image models create the visual assets and alternate poses. Vision and segmentation models identify editable parts. A deterministic TypeScript engine composes the stored assets, layers, transforms and keyframes. The renderer must not ask an AI model to invent a new image on every playback frame.
 
 User flow:
+1. The user enters a prompt, e.g. "a girl sleeping on a balcony at night, 6 seconds; at 3 seconds she wakes up and looks at the clock".
+2. The AI creates a scene plan containing the environment, characters, props, independently editable assets and timed actions.
+3. The image-generation pipeline creates the background and separate character/prop artwork, then extracts transparent layers where needed.
+4. The server validates the scene and asset references, and reports useful errors or requests repair when required.
+5. The browser opens the result as editable layers and timeline tracks. The user can move, redraw, hide, reorder and animate parts.
+6. The user refines the scene by chat or manual editing and exports MP4.
 
-1. User enters a prompt, e.g. "a cat sleeping on a rainy balcony at night, 12 seconds, lightning at 6s", plus duration and aspect ratio (16:9, 9:16, 1:1).
-2. The AI writes a storyboard (timed beats), then a scene spec that uses only objects from the engine's library.
-3. The server validates the spec and asks the AI to repair it if invalid.
-4. The browser plays the animation with a timeline scrubber.
-5. User refines by chat ("make the rain heavier", "move the cat left"). The AI returns a patch, not a whole new scene.
-6. User exports MP4 (1920×1080 or 1080×1920 for YouTube Shorts).
-
-The app runs entirely on the user's PC. The default AI is a local Ollama model on an RTX 3060 12GB, with an optional cloud fallback.
+The app runs locally on the user's PC. Keep the local-first workflow and the configured local AI/image-generation providers. Any cloud fallback must remain optional.
 
 ## Workspace and drawing tools (Krita-style)
 
-The editor looks and works like a simplified Krita: a dark, dockable workspace with the toolbox on the left, the canvas in the center, dockers on the right and the animation timeline along the bottom. Follow Krita's layout conventions and shortcuts, but design original icons and UI; do not copy Krita's code (it is GPL), artwork or branding.
-
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│ File  Edit  View  Layer  Animation  AI  Export                       │
-│ Tool options: size | opacity | smoothing | color swatch               │
-├────┬───────────────────────────────────────────────┬─────────────────┤
-│ ✎  │                                               │ Color selector  │
-│ ⌫  │                                               ├─────────────────┤
-│ ▣  │                  CANVAS                       │ Brush presets   │
-│ ◯  │     zoom, pan, rotate, onion skin overlay     ├─────────────────┤
-│ ✥  │                                               │ Layers          │
-│ ⬚  │                                               ├─────────────────┤
-│ ⌖  │                                               │ AI assistant    │
-├────┴───────────────────────────────────────────────┴─────────────────┤
-│ Timeline: rows = layers, columns = frames | play | fps | onion skin    │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-All panels are resizable, collapsible and can be re-docked; the layout is saved per user. Every color, size and component follows the Visual design system section below.
+The editor is a dark, dockable creative workspace with the toolbox on the left, canvas in the center, dockers on the right and animation timeline along the bottom. Follow familiar Krita-style workspace conventions, but use original icons, artwork and UI. Do not copy Krita's code, artwork or branding.
 
 **Toolbox:**
 
 | Tool | Shortcut | Behavior |
 | --- | --- | --- |
-| Brush | B | Pressure-sensitive strokes from mouse or pen tablet; size, opacity, smoothing; presets: pencil, ink pen, marker, soft airbrush |
+| Brush | B | Pressure-sensitive strokes from mouse or pen tablet; size, opacity, smoothing and presets |
 | Eraser | E | Erases strokes on the current frame |
-| Fill | F | Fills a closed area on the current frame with the current color |
-| Shapes | U | Line, rectangle, ellipse; hold Shift to constrain |
-| Move / Transform | T | Move, scale, rotate a layer or selection; with auto-key on, creates transform keyframes |
+| Fill | F | Fills a closed area on the current frame |
+| Shapes | U | Line, rectangle and ellipse; hold Shift to constrain |
+| Move / Transform | T | Move, scale and rotate a layer or selection; auto-key creates transform keyframes |
 | Select | S | Rectangle and lasso selection on the current frame |
 | Eyedropper | P, or Ctrl while brushing | Picks a color from the canvas |
-| View | Space drag, Ctrl+wheel, Shift+Space drag | Pan, zoom, rotate the canvas view |
+| View | Space drag, Ctrl+wheel | Pan and zoom the canvas view |
 
-**Timeline docker:** a grid of layers × frames like Krita's animation timeline. Filled cells mark drawn frames; empty cells hold the previous drawing. Users can insert blank frame, duplicate frame, delete frame, drag frames to retime, set fps (12, 24, 30) and play range, loop, and step with `,` and `.`. Object layers show their keyframes as diamonds. AI storyboard beats appear as markers above the frame numbers.
+**Timeline docker:** a grid of layers by frames. Users can insert a blank frame, duplicate or delete a frame, drag frames to retime, set FPS and play range, loop, and step frame-by-frame. Object and rigged-part layers show keyframes as diamonds. AI storyboard beats appear as markers above the frame numbers.
 
-**Onion skin:** shows up to 3 frames before (tinted red) and after (tinted green) the current frame with adjustable opacity; toggle with a button on the timeline.
+**Onion skin:** show up to 3 frames before and after the current frame with adjustable opacity and distinct tints.
 
-**Layers docker:** drawing layers (hand-drawn, frame-by-frame), object layers (library objects, usually created by the AI), and groups. Each has visibility, lock, opacity, blend mode (normal, multiply, screen, add), rename and drag-to-reorder.
+**Layers docker:** drawing layers, object/image layers, character groups and ordinary groups. Each layer has visibility, lock, opacity, blend mode, rename and drag-to-reorder. AI-generated layers show a small generated marker until the user edits them.
 
-**AI assistant docker:** the prompt box and chat history. It can create a whole scene, add object layers, change keyframes, or animate a drawn layer ("make my drawn bird fly from left to right in 3 seconds" adds transform keyframes to that layer).
+**AI assistant docker:** prompt box and chat history. It can create a scene, generate separate assets, add layers, change keyframes, or animate a drawn or rigged layer. A request such as "make my drawn bird fly from left to right in 3 seconds" should add deterministic transform keyframes to that layer.
 
-**History:** undo/redo with Ctrl+Z and Ctrl+Shift+Z across every action, drawing and AI edits alike, plus autosave every 30 seconds.
+**History:** undo/redo across drawing and AI edits, plus autosave using the existing project persistence system.
 
 ## Visual design system
 
-The app must look like a finished professional creative tool, on the level of Krita, Blender or Figma: calm graphite surfaces that let the artwork stand out, one warm accent, crisp type, and identical behavior everywhere. Build every screen from one token file and one component library; no screen invents its own styles.
+The app must look like a finished professional creative tool: calm graphite surfaces that let the artwork stand out, one warm accent, crisp type, and consistent behavior. Build screens from the existing token file and shared component library; do not invent one-off styles.
 
-**Color tokens** (`packages/ui/src/tokens.css`, dark theme is the default; a light theme may come later using the same token names):
+**Color tokens** (`packages/ui/src/tokens.css`, dark theme by default):
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `--bg-app` | `#16151a` | Window background, gaps between panels |
+| `--bg-app` | `#16151a` | Window background and gaps between panels |
 | `--bg-panel` | `#1e1d23` | Docker and toolbar surfaces |
-| `--bg-raised` | `#28272e` | Inputs, buttons, timeline rows |
-| `--bg-hover` | `#32313a` | Hover state on any surface |
-| `--canvas-surround` | `#0e0e11` | Area around the canvas; transparency shows a subtle checkerboard |
-| `--border` | `#2d2c33` | 1px dividers between panels and rows |
-| `--border-strong` | `#44424c` | Popovers, focused inputs |
-| `--text-1` | `#ecebef` | Primary text, active labels |
-| `--text-2` | `#a8a5b1` | Secondary text, panel titles |
-| `--text-3` | `#72707b` | Hints, disabled text, frame numbers |
-| `--accent` | `#f2a93b` | Marigold: active tool, playhead, keyframes, primary button |
-| `--accent-hover` | `#ffbd5a` | Primary button hover |
-| `--accent-ink` | `#1a1206` | Text and icons on accent |
-| `--accent-soft` | `rgba(242,169,59,.16)` | Active tool background, selected frame cell |
-| `--select` | `#4c8dff` | Selection outlines and transform handles only |
-| `--onion-before` / `--onion-after` | `#ff5d6c` / `#3ccf91` | Onion skin tints |
+| `--bg-raised` | `#28272e` | Inputs, buttons and timeline rows |
+| `--bg-hover` | `#32313a` | Hover state |
+| `--canvas-surround` | `#0e0e11` | Area around canvas; transparency uses a checkerboard |
+| `--border` | `#2d2c33` | Dividers |
+| `--border-strong` | `#44424c` | Popovers and focused inputs |
+| `--text-1` | `#ecebef` | Primary text |
+| `--text-2` | `#a8a5b1` | Secondary text |
+| `--text-3` | `#8f8d98` | Hints and disabled text (lightened from `#72707b` to meet WCAG AA) |
+| `--accent` | `#f2a93b` | Active tool, playhead, keyframes and primary action |
+| `--accent-hover` | `#ffbd5a` | Primary action hover |
+| `--select` | `#4c8dff` | Selection outlines and transform handles |
 | `--danger` / `--success` / `--warning` | `#ff5d6c` / `#3ccf91` / `#f2c94c` | Status and toasts |
 
-The accent appears only where it carries meaning: current tool, current frame, playhead, keyframes, the one primary action on screen. Never use it for decoration.
-
-**Typography:** Geist for all UI and Geist Mono for timecode, frame numbers and numeric fields, bundled locally with @fontsource (the app works offline). Always use tabular numbers. Scale: 11px micro (frame numbers), 12px panel text, 13px default, 15px panel and section titles, 20px dialog titles, 28px welcome screen heading. Weights 400 and 600 only. Sentence case everywhere; no all-caps labels.
-
-**Spacing and size:** 4px grid (4, 8, 12, 16, 24, 32). Menu bar 32px, tool options bar 36px, panel header 32px, toolbox buttons 36×36 with 20px icons, panel icons 16px, timeline rows 28px, frame cells 12–24px wide with zoom. Radius: 4px buttons and inputs, 6px panels and cards, 10px menus, popovers and dialogs. Panels are flat and separated by 1px borders; only floating elements (menus, popovers, dialogs, toasts) get a shadow: `0 12px 32px rgba(0,0,0,.5)` plus a 1px `--border-strong` outline.
-
-**Icons:** lucide-react at 1.5 stroke width, one size per context, never mixed icon sets. Every icon button has a tooltip with its name and shortcut, e.g. "Brush (B)".
-
-**Core components** (Radix UI primitives styled with tokens, all shown in Storybook):
-
-- Button: primary (accent), secondary (raised), ghost, icon; sizes 28 and 32px.
-- Numeric field with drag-to-scrub label and slider, used for brush size, opacity, fps, transform values.
-- Color picker: HSV square with hue strip, hex input, recent colors, eyedropper button.
-- Panel: header with title, collapse chevron and overflow menu; scroll area with thin custom scrollbars.
-- Menu, context menu, dropdown, tabs, toggle, tooltip, toast, modal dialog.
-- Command palette (Ctrl+K) that runs any menu action by name, and a shortcut sheet (press ?).
-
-**States:** every interactive element has default, hover, pressed, focus-visible (2px `--accent` ring with 2px offset), selected and disabled (40% opacity, no pointer). Inputs show validation errors inline in `--danger` with the reason and the fix.
-
-**Motion:** 120ms ease-out for hover and press, 180ms for panels opening and docking, 220ms for dialogs. No decorative or looping UI animation; the artwork is the only thing that moves. With reduced motion enabled, use instant changes.
-
-**Signature element: the timeline.** Spend the polish here. Clean frame grid, marigold keyframe diamonds, a playhead with a timecode bubble (`00:04:12`), drawn-frame dots, AI storyboard beats as small labeled flags above the ruler, smooth zoom with Ctrl+wheel, and layers generated by AI marked with a small spark icon until the user edits them.
-
-**Key screens beyond the workspace:**
-
-- **Welcome:** large prompt field ("Describe an animation…"), size presets as cards (YouTube 16:9, Shorts 9:16, Square), recent projects grid whose thumbnails play on hover, and an AI status pill ("Local AI ready: qwen2.5-coder:14b" or a fix-it message).
-- **AI generating:** storyboard beats appear on the timeline first, layers fill in as they arrive, and the AI docker shows progress ("Writing scene: 1,240 tokens") with a Cancel button.
-- **Export dialog:** preset cards, live first-frame preview, file name, progress bar with frame count and time left, and "Show in folder" when done.
-- **Empty states:** an empty timeline says "Draw on the canvas or ask the AI to start a scene" with both actions as buttons.
+Use the existing typography, spacing, radii, icon and component conventions already in the repository. The accent is functional, not decorative. Every interactive element needs visible focus, hover, pressed, selected and disabled states. Respect reduced-motion settings.
 
 **Polish checklist** (every milestone must pass it):
-
-- [ ] No hard-coded colors, sizes or font values outside `tokens.css`.
-- [ ] Every icon button has a tooltip with its shortcut; every action is reachable from the menu and the command palette.
-- [ ] Keyboard focus is visible and follows a logical order; all text meets WCAG AA contrast.
-- [ ] Panels look right at 1366×768 and 2560×1440, and at 100%, 125% and 150% Windows scaling.
-- [ ] No layout shift when panels load; long names truncate with an ellipsis and show the full name on hover.
-- [ ] Loading, empty and error states exist for every panel.
+- [x] No hard-coded colors, sizes or font values outside the shared tokens where tokens apply.
+- [x] Every icon button has a tooltip; actions are reachable from the menu or command palette where applicable.
+- [x] Keyboard focus is visible and follows a logical order; text meets WCAG AA contrast.
+- [x] Panels work at 1366×768 and 1920×1080, including common Windows display scaling.
+- [x] Long names truncate cleanly and expose the full name on hover.
+- [x] Loading, empty and error states exist for every changed panel.
 
 ## Technology stack
 
-Use TypeScript everywhere in a pnpm monorepo. Do not add other major libraries without asking.
+Use the current versions and conventions already in the repository. Do not add another frontend, renderer, database, job system or major dependency without asking.
 
 | Layer | Technology | Purpose |
 | --- | --- | --- |
-| Language | TypeScript 5 (strict mode), Node.js 20+ | One language for engine, server and UI |
-| Monorepo | pnpm workspaces | Share the spec, engine and UI library between apps |
-| Frontend | React 18 + Vite | Workspace, dockers, player |
-| Design tokens | CSS custom properties in `packages/ui/src/tokens.css` | Single source for every color, size, radius, shadow |
-| UI primitives | Radix UI | Accessible menus, dialogs, tooltips, sliders, tabs |
-| UI styling | Tailwind CSS mapped to the tokens | Fast styling that can only use token values |
-| Fonts | Geist + Geist Mono via @fontsource | Bundled locally, works offline |
-| Component gallery | Storybook | Every component and state shown and checked |
-| Dockable panels | dockview | Resizable, re-dockable panels with saved layout |
-| Icons | lucide-react | One consistent icon set |
-| Command palette | cmdk | Ctrl+K action search |
-| Shortcuts | tinykeys | Krita-style keyboard shortcuts |
-| UI state | Zustand | Current tool, frame, layers, chat, history |
-| Pen input | Pointer Events API | Mouse and pen tablet with pressure |
-| Stroke rendering | perfect-freehand | Smooth, pressure-sensitive brush outlines from stored points |
-| JSON editor | CodeMirror 6 | Advanced view: hand-edit the scene spec with live validation |
-| Renderer | Canvas 2D API (no game engine) | Deterministic drawing of the scene spec |
-| Backend | Fastify | REST API + Server-Sent Events for progress |
-| Validation | Zod + zod-to-json-schema | One schema: TS types, runtime checks, and the JSON schema sent to the AI |
-| Patching | fast-json-patch (RFC 6902) | Apply AI edits as small patches; also used for undo history |
-| Database | SQLite via better-sqlite3 + Drizzle ORM | Projects, spec versions, chat history |
-| Local AI | Ollama, model `qwen2.5-coder:14b` | Storyboard and spec generation |
-| Cloud fallback | Any OpenAI-compatible API (Gemini, Groq) | Optional, configured by `.env` |
-| Video export | Puppeteer + ffmpeg (ffmpeg-static) | Render frames headlessly and encode MP4 |
-| Testing | Vitest; Playwright for frame and UI screenshots | Schema, engine determinism, visual regressions |
-| Lint/format | ESLint (incl. a rule blocking hex colors outside tokens) + Prettier | Consistent code and styling |
+| Language | TypeScript, strict mode; Node.js 20+ | Shared language across engine, server and UI |
+| Monorepo | pnpm workspaces | Shared spec, engine, AI and UI packages |
+| Frontend | React + Vite | Workspace, dockers and player |
+| Desktop | Electron | Desktop application wrapper |
+| Backend | Fastify | REST API and generation-job progress events |
+| Validation | Zod | Scene and API runtime validation |
+| Renderer | Canvas 2D | Deterministic composition of layers and keyframes |
+| Local language model | Ollama | Storyboard, scene planning and structured edits |
+| Image generation | ComfyUI integration | Local generation of background, character and prop artwork |
+| Persistence | Existing SQLite/Drizzle project storage | Projects, versions and metadata |
+| Image assets | Existing generated-image storage and serving route | Store image bytes separately from the scene JSON |
+| Testing | Vitest and Playwright | Schema, engine, UI and end-to-end checks |
+
+Keep the model lifecycle compatible with the target RTX 30-series GPU with approximately 10–12 GB VRAM. Do not assume the language model, image model, segmentation model and video model can remain loaded together. Run heavyweight stages sequentially where possible and preserve the existing unload behavior. Model and workflow paths must be configurable. Do not silently download large model files.
 
 ## Project structure
 
-Keep the engine and spec in shared packages so the browser player and the headless exporter run exactly the same code.
+Keep the engine and spec in shared packages so editor preview and headless export use the same scene contract and rendering code. The current repository is the source of truth; verify exact paths before creating or moving files.
 
 ```text
 anim-studio/
 ├─ BRIEF.md
-├─ README.md                  # setup, ollama pull command, how to run
-├─ .env.example               # AI_PROVIDER, OLLAMA_URL, OLLAMA_MODEL, FALLBACK_*
-├─ pnpm-workspace.yaml
-├─ reference/
-│  └─ autumn-window.html      # original demo, read-only
+├─ README.md
 ├─ packages/
-│  ├─ spec/                   # the data contract
-│  │  ├─ src/schema.ts        # Zod schema for SceneSpec
-│  │  ├─ src/types.ts         # inferred TS types
-│  │  ├─ src/json-schema.ts   # exports JSON schema for Ollama `format`
-│  │  └─ examples/
-│  │     └─ autumn-window.json
-│  ├─ engine/                 # deterministic canvas renderer
-│  │  ├─ src/index.ts         # createRenderer(canvas, spec) -> { render(t) }
-│  │  ├─ src/tracks.ts        # keyframes, easing, integrate()
-│  │  ├─ src/rng.ts           # seeded random
-│  │  ├─ src/resolve.ts       # "$palette" and "@track" references
-│  │  ├─ src/registry.ts      # object registry + catalog for AI prompt
-│  │  └─ src/objects/
-│  │     ├─ backgrounds/      # room, sky, window, hills, city
-│  │     ├─ particles/        # leaves, rain, snow, stars, dust
-│  │     ├─ props/            # lantern, mug, turntable, plant, pumpkin
-│  │     ├─ characters/       # fox, cat
-│  │     ├─ fx/               # glow, lightning, vignette, fade, grain
-│  │     └─ text/             # title
-│  ├─ ui/                     # design system: tokens + components
-│  │  ├─ src/tokens.css
-│  │  ├─ src/components/      # Button, NumberField, ColorPicker, Panel, Menu...
-│  │  └─ stories/             # Storybook stories for every component state
-│  └─ ai/                     # model access and prompts
-│     ├─ src/providers/ollama.ts
-│     ├─ src/providers/openai-compatible.ts
-│     ├─ src/generate.ts      # storyboard -> spec -> validate -> repair
-│     ├─ src/edit.ts          # instruction -> JSON Patch
-│     └─ prompts/
-│        ├─ storyboard.md
-│        ├─ spec.md
-│        ├─ repair.md
-│        └─ edit.md
+│  ├─ spec/                 # Zod scene schema and inferred types
+│  ├─ engine/               # deterministic canvas renderer and objects
+│  ├─ ai/                   # prompts, providers, generation and editing
+│  └─ ui/                   # design tokens and shared components
 ├─ apps/
-│  ├─ server/                 # Fastify API
-│  │  ├─ src/routes/          # generate, edit, projects, export, health
-│  │  ├─ src/db/              # Drizzle schema + migrations
-│  │  └─ src/export/          # puppeteer + ffmpeg pipeline
-│  └─ web/                    # React + Vite
-│     ├─ src/pages/           # NewProject, Editor, Projects, RenderOnly
-│     ├─ src/workspace/       # dockview layout, menu bar, tool options bar
-│     ├─ src/tools/           # brush, eraser, fill, shapes, transform, select, eyedropper
-│     ├─ src/dockers/         # Timeline, Layers, Color, BrushPresets, AIAssistant, History
-│     ├─ src/canvas/          # view (zoom/pan/rotate), onion skin, pointer input
-│     ├─ src/components/      # shared UI pieces, SpecEditor
-│     └─ src/store/
-└─ data/                      # sqlite db + exported mp4 (gitignored)
+│  ├─ server/               # Fastify API, jobs, persistence and export
+│  ├─ web/                  # React/Vite editor and workspace
+│  └─ desktop/              # Electron wrapper
+└─ data/                    # local database, generated assets and exports
 ```
+
+Do not create a parallel package when an existing package already owns the responsibility. New files should follow current package naming and test conventions.
 
 ## Scene spec format
 
-The scene spec is the only thing the AI produces. Define it once in `packages/spec/src/schema.ts` with Zod; everything else derives from it.
+The scene spec is the editable project contract. Define and validate it in `packages/spec/src/schema.ts` with Zod; derive TypeScript types and any JSON schema from that source. Keep image bytes outside the JSON spec and reference them by stable asset id or content hash.
 
-```json
-{
-  "version": 1,
-  "meta": { "title": "autumn window", "duration": 12, "fps": 30, "width": 1280, "height": 720 },
-  "palette": { "fox": "#e9773c", "sky": "#4d3f7d" },
-  "tracks": {
-    "wind":     { "keys": [[0, 0.35], [4.3, 0.35], [5.2, 1.8], [8.6, 0.45]], "ease": "inOut" },
-    "foxAwake": { "keys": [[0, 0], [8.05, 0], [8.6, 1], [10.3, 1], [11, 0]] },
-    "lampOn":   { "keys": [[0, 0.1], [2, 0.1], [2.6, 1]], "ease": "step" }
-  },
-  "camera": { "zoom": "@camZoom", "x": 760, "y": 400 },
-  "layers": [
-    { "id": "bg",  "type": "room", "params": {} },
-    { "id": "fox", "type": "fox",  "params": { "x": 820, "y": 596, "color": "$fox", "awake": "@foxAwake" } }
-  ],
-  "overlays": [ { "type": "vignette" }, { "type": "title", "params": { "text": "autumn window", "opacity": "@title" } } ],
-  "beats": [ { "at": 8, "label": "Leaf lands", "note": "fox wakes" } ]
-}
-```
+Existing scenes include vector/object layers, drawings, painted backgrounds and video/footage layers. Preserve those formats. The new layered workflow may add image/sprite assets, character groups, parent-child relationships, pivots and semantic timed actions. Prefer the smallest compatible schema extension. If a version change is required, add explicit migration/defaulting behavior and fixtures proving old projects still load.
 
 Rules:
-
-- **Coordinates** are logical units with origin top-left, sized by `meta.width` × `meta.height`. The engine scales to the real canvas size.
-- **References:** a string starting with `$` reads a palette color; a string starting with `@` reads a track's value at the current time. Any numeric param may be a number or an `@track`.
-- **Tracks** are keyframes `[time, value]` sorted by time. `ease` is one of `linear`, `inOut`, `in`, `out`, `step`; default `inOut`.
-- **Layers** draw in array order (first = back). Each layer `type` must exist in the engine registry, and its `params` are validated against that object's own Zod schema.
-- **Time** never exceeds `meta.duration`. Periodic motions should divide evenly into the duration so loops are seamless.
-- `beats` are for the UI timeline and for the AI's planning; the engine ignores them.
-- Port the reference demo to `examples/autumn-window.json` as the first valid example.
-
-**Hand-drawn layers.** Drawings are stored as vector strokes inside the same spec, so drawn and AI-made layers share one timeline, one renderer and one export path:
-
-```json
-{
-  "id": "bird",
-  "type": "drawing",
-  "params": { "opacity": 1, "blend": "normal" },
-  "transform": { "x": "@birdX", "y": 300, "rotation": 0, "scale": 1 },
-  "frames": [
-    { "start": 0,     "strokes": [ { "tool": "brush", "preset": "ink", "color": "#2b2130", "size": 6,
-                                    "points": [[412, 300, 0.4], [418, 296, 0.7], [430, 294, 0.8]] } ] },
-    { "start": 0.083, "strokes": [ { "tool": "fill", "at": [420, 310], "color": "#f2b03c" } ] }
-  ]
-}
-```
-
-- A drawing frame is shown from its `start` until the next frame's `start` (hold exposure, like Krita).
-- Points are `[x, y, pressure]`. The engine renders strokes with perfect-freehand and replays fills and erases in order, so output stays deterministic.
-- Times are stored in seconds; the UI converts to frame numbers with `meta.fps`.
-- Any layer, drawn or object, may have a `transform` whose values can be `@track` references. This is how the AI animates a user's drawing.
+- Coordinates use the scene's logical canvas dimensions with origin at the top-left.
+- Layer order is explicit and predictable; document whether first or last draws at the back and preserve the engine's current convention.
+- Keyframes are evaluated from absolute time. Scrubbing to the same timestamp must always produce the same result.
+- All action times must be within the scene duration.
+- Image layers reference stored assets; never embed large base64 images in the scene JSON.
+- Character parts may reference a parent and a pivot in a documented coordinate space. Reject missing parents and circular hierarchies.
+- A semantic action such as `look_at` references a real target object and becomes deterministic keyframes/tracks before playback.
+- Old versioned projects must remain loadable and saveable without losing unsupported fields or assets.
 
 ## Renderer engine
 
-The engine is a pure function of time: `render(t)` must produce the identical frame every time for the same spec and `t`. Scrubbing, looping and MP4 export all depend on this.
+The engine is a pure function of time: rendering the same scene at the same `t` must produce the identical frame every time. Scrubbing, looping and export depend on this.
 
 Requirements:
-
-- **API:** `createRenderer(canvas, spec)` returns `{ render(t: number), setSpec(spec), dispose() }`. No timers inside the engine; the player calls `render(t)` from `requestAnimationFrame`.
-- **Determinism:** no `Math.random()`, `Date.now()` or accumulated state between frames. Use the seeded RNG; precompute particles from a seed. For motion driven by a changing value (wind pushing leaves), use the integral of the track up to `t`, as the reference demo does.
-- **Object registry:** every object type is one file exporting a definition:
-
-```ts
-export const fox = defineObject({
-  type: "fox",
-  category: "characters",
-  description: "A fox curled up asleep; can wake, twitch ears and sway tail.",
-  params: z.object({
-    x: num, y: num, scale: num.default(1),
-    color: color.default("#e9773c"),
-    awake: num.default(0)            // 0 asleep .. 1 eyes open
-  }),
-  draw(ctx, p, t, env) { /* canvas drawing */ }
-});
-```
-
-- `num` accepts a number or an `@track` string; `color` accepts a hex or a `$palette` string. The engine resolves references before calling `draw`, so `draw` always gets plain values.
-- **Catalog for the AI:** `registry.catalog()` returns a compact text list of every type with its description, params and defaults. The AI prompts are built from this automatically, so adding an object file makes it available to the AI with no prompt edits.
-- **Starting library (Milestone 1):** port every object from the reference demo (wall/room, window + outside view with falling leaves, window frame, plant, light shaft, lantern, turntable, music notes, pumpkin, stool + mug with steam, cushion, fox, hero leaf on a path, glow, vignette, title, fade). Add a generic `path-mover` that moves any small prop along a Bézier between two times.
-- **Original art only:** never add objects that copy a known character, brand or artwork.
-- **Performance:** hold 60 fps at 1920×1080 in Chrome on the user's PC; cache gradients and precomputed geometry per spec.
+- Use the existing renderer API and object registry; extend them rather than replacing them.
+- No `Math.random()`, `Date.now()` or accumulated frame-to-frame state in rendering. Use seeded randomness and evaluate animation from absolute time.
+- Add or extend an image/sprite object that draws a referenced RGBA asset with correct alpha.
+- Compose parent-child transforms in a documented order and rotate parts around their explicit pivots, not their bounding-box centers.
+- Preserve existing vector objects, drawing layers, paintings and video/footage rendering.
+- Use the same engine for editor preview and the future headless exporter.
+- Keep playback responsive; cache stable geometry and image resources where appropriate.
 
 ## AI layer
 
-The default model is local: Ollama at `http://localhost:11434` running `qwen2.5-coder:14b` on an RTX 3060 12GB. Expect roughly 25–30 tokens per second, so a full spec takes 1–2 minutes; design the UI around that wait.
+The AI layer has two separate responsibilities: planning and artwork creation. Do not confuse the scene planner's structured output with the image model's generated pixels.
 
-**Generation pipeline** (`packages/ai/src/generate.ts`):
+**Current generation behavior:** the existing Vector, Painted and Video workflows must remain available. The Painted workflow currently creates a background painting and empty subject drawing layers; the existing region/motion pass identifies approximate regions and applies subtle motion. This is not true character-part separation. Rectangular boxes or feathered oval crops must not be presented as independently editable character assets because the original subject can remain visible underneath and create ghosting.
 
-1. **Storyboard call.** Input: user prompt, duration, aspect. Output JSON: `{ title, mood, palette, beats: [{ at, label, note }] }`. Small and fast.
-2. **Spec call.** Input: storyboard + `registry.catalog()` + one full example spec. Output: a SceneSpec. Pass the JSON schema from `packages/spec` as Ollama's `format` so output is forced into valid JSON shape.
-3. **Validate** with Zod, including per-object param schemas and unknown-type checks.
-4. **Repair loop.** If invalid, send the spec and the exact Zod error messages to the repair prompt. Maximum 3 attempts, then return the errors to the user.
+**Scene planning:** the language model should return a structured storyboard/asset plan with environment, characters, independently needed props, foreground occluders, approximate placements, style constraints and timed actions. Validate the output with Zod and use the existing repair/error pattern.
 
-**Ollama call settings:** `stream: true` (forward progress to the UI), `temperature: 0.4`, `num_ctx: 8192`. Keep prompts short enough that system prompt + example + output fit in 8K tokens. If the example spec is too long, use a trimmed example.
+**Artwork generation:** ComfyUI creates visual assets from the plan. Generate a clean environment background without separately generated characters or props. Generate character reference artwork and independent props with consistent style, composition and identity. Use a shared reference image/seed or the provider's supported reference-conditioning workflow where available.
 
-**Edit pipeline** (`edit.ts`): input = current spec + user instruction. Output = a JSON Patch array (RFC 6902) changing only what was asked. Apply with fast-json-patch, then validate. If the model returns a broken patch twice, fall back to asking for the full updated spec.
+**Asset separation:** use actual segmentation masks for character parts, not just region boxes. Extract transparent RGBA layers, preserve source dimensions and placement, and reconstruct the pixels hidden behind removed parts using an appropriate inpainting workflow. Keep source artwork and derived assets/masks so a user can retry extraction or replace a part. If a mask is unreliable, flag it for manual correction instead of silently accepting a broken layer.
 
-**Prompts** live as Markdown files in `packages/ai/prompts/`, loaded at runtime, with `{{catalog}}`, `{{example}}`, `{{storyboard}}` placeholders. Each prompt must state: output JSON only, use only listed object types, keep all times within duration, make periodic motion loop-friendly.
-
-**Providers:** one interface `generateJSON({ system, user, schema, onToken })`. Implement `ollama` and `openai-compatible` (base URL + key + model from `.env`), so Gemini or Groq free tiers can be used as a fallback with no code changes. Add `GET /api/health` that reports whether Ollama is reachable and the model is pulled.
+**Providers:** keep existing Ollama and ComfyUI/provider interfaces. Model-specific workflows should sit behind adapters; the rest of the application should consume typed plans and generated asset references rather than ComfyUI-specific node output.
 
 ## Backend API and web app
 
-**API endpoints** (Fastify, JSON):
+Use the existing Fastify API, job/progress mechanism, project persistence and image-serving routes. Extend those systems instead of introducing a second job queue or asset server.
 
-| Method | Path | Does |
-| --- | --- | --- |
-| POST | `/api/generate` | Body `{ prompt, duration, aspect }`. Starts generation, returns `{ jobId }` |
-| GET | `/api/jobs/:id/events` | SSE stream: `storyboard`, `token` progress, `repairing`, `done` (with spec), `error` |
-| POST | `/api/projects/:id/edit` | Body `{ instruction }`. Returns `{ patch, spec, version }` |
-| GET | `/api/projects` | List projects with title, duration, updated time |
-| GET / PUT | `/api/projects/:id` | Read or save a project (manual JSON edits) |
-| POST | `/api/projects/:id/undo` | Restore the previous spec version |
-| POST | `/api/projects/:id/export` | Body `{ preset }`. Starts MP4 export, returns `{ jobId }` |
-| GET | `/api/exports/:file` | Download a finished MP4 |
-| GET | `/api/health` | Ollama status, model name, GPU/model loaded |
+**Existing API behavior:** preserve current generation, editing, project, health and export contracts unless a compatible extension is required. Inspect the route schemas and client consumers before changing them.
 
-Store every spec change as a new version row so undo always works.
+**Layered generation:** expose the new mode through the existing generation route or a compatible versioned extension. The job should report typed progress stages such as `plan`, `background`, `character`, `props`, `segment`, `reconstruct`, `rig`, `animate`, `validate`, `done` and `error`. Include cancellation between heavyweight stages. Do not expose secrets or internal model credentials in progress events.
 
 **Web screens:**
+- **New project:** keep the existing prompt, duration, aspect and generation choices; add a Layered animation option without removing Vector, Painted or Video.
+- **Generating:** show stage progress, per-asset status and cancellation. Show storyboard/action timing before or while assets arrive when possible.
+- **Editor:** show generated character groups and image parts in the existing Layers docker. Allow selecting, hiding, reordering and transforming parts. Expose pivot adjustment for rigged parts and show action keyframes on the timeline.
+- **Projects:** save and reopen the scene and all referenced assets. Do not leave broken asset references after undo, version restore or project deletion.
 
-- **New project:** large prompt box, duration slider (5–30s), aspect buttons (16:9, 9:16, 1:1), Generate button. While generating, show the storyboard beats as soon as they arrive, then a progress indicator for the spec.
-- **Editor:** the Krita-style workspace described in "Workspace and drawing tools", with the AI assistant as a docker and the spec editor as an optional advanced panel. Export is in the menu bar.
-- **Projects:** grid of saved projects with a thumbnail frame rendered at the midpoint.
-- **Render-only page** (`/render/:id`): a bare full-size canvas with `window.renderFrame(t)` exposed, used only by the exporter.
-
-Show clear, actionable errors: "Ollama is not running — start it and refresh", "Model not found — run `ollama pull qwen2.5-coder:14b`".
+Reuse the existing UI components, tokens and workspace. Do not redesign the whole application for this milestone.
 
 ## Video export
 
-Export renders every frame with the same engine in headless Chrome and pipes the frames into ffmpeg, so the MP4 matches the preview exactly.
-
-1. Puppeteer opens `/render/:id?w=<width>&h=<height>` and waits for `window.renderReady`.
-2. For frame `i` from 0 to `duration × fps − 1`: call `renderFrame(i / fps)`, read the canvas as PNG (`canvas.toDataURL` or `toBlob`), and write it to ffmpeg's stdin.
-3. ffmpeg command: `-f image2pipe -framerate <fps> -i - -c:v libx264 -pix_fmt yuv420p -crf 18 -preset medium -movflags +faststart out.mp4`.
-4. Report progress (frame i of N) over SSE; save to `data/exports/`.
+Export renders every frame with the same deterministic engine used by the editor preview and encodes those frames into MP4. Keep this work in the export milestone, but ensure new layered scenes use the same render path and asset references.
 
 Presets:
 
-| Preset | Size | fps |
+| Preset | Size | FPS |
 | --- | --- | --- |
 | YouTube | 1920×1080 | 30 |
 | Shorts / Reels / TikTok | 1080×1920 | 30 |
 | Square | 1080×1080 | 30 |
 | Draft (fast) | 960×540 | 24 |
 
-If the spec's aspect does not match the preset, letterbox it; never stretch. Optional later: an audio track (music file) muxed with `-shortest`.
+If the scene aspect does not match the preset, letterbox it; never stretch. Report frame progress through the existing job/progress mechanism.
 
 ## Build milestones
 
@@ -395,34 +213,161 @@ Build in this order. Finish one milestone, make sure its "done when" passes, the
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| 1 | Monorepo, `spec` package, `engine` with all reference objects, ui package (tokens, fonts, core components in Storybook), Krita-style workspace shell (menu, toolbox, canvas, dockers, timeline) with playback, welcome screen | `examples/autumn-window.json` plays in the canvas and looks the same as `reference/autumn-window.html`; scrubbing works; panels dock and resize; polish checklist passes; determinism test passes |
-| 2 | Drawing: brush, eraser, fill, shapes, select, transform, eyedropper; drawing layers; frame-by-frame timeline; onion skin; undo/redo | A user can draw a 12-frame flipbook with a pen tablet, see onion skin, play it at 12 fps, and undo any step |
-| 3 | AI generation with Ollama: storyboard, spec, validate, repair, SSE progress, AI assistant docker | A prompt produces a valid scene that appears as layers in the timeline and plays |
-| 4 | AI editing: chat edits via JSON Patch, animate drawn layers, version history, SQLite projects | "Make the leaves fall faster" and "make my bird fly left to right" change only the right values; projects survive restart |
-| 5 | MP4 export with presets and progress | A 12s scene exports a playable 1080×1920 MP4 matching the preview |
-| 6 | Library growth and polish: rain, snow, stars, lightning, city skyline, cat, brush presets, style presets, cloud fallback provider | At least 10 new objects, each with a demo spec; fallback provider works from `.env` |
+| 1 | Foundation: monorepo, spec, engine, object library, UI system, Krita-style workspace and playback | The reference scene plays deterministically; scrubbing works; panels dock and resize; core UI and determinism checks pass. |
+| 2 | Drawing: brush, eraser, fill, shapes, select, transform, eyedropper, drawing layers, frame timeline, onion skin and undo/redo | A user can create and play a short flipbook with pen input, onion skin and undo/redo. |
+| 3 | AI scene generation: Ollama storyboard/spec generation, validation/repair, progress events and AI assistant | A prompt produces a validated scene that appears as editable layers and plays. |
+| 4 | AI editing and projects: chat edits via JSON Patch, animation of hand-drawn layers, version history and SQLite persistence | Targeted edits modify only intended values; projects survive restart and previous versions can be restored. |
+| **5** | **AI layered asset generation and character rigging** | **The girl-on-balcony acceptance scene generates separate background, clock and character-part layers; the head turns toward the clock at 3s; playback is deterministic; layers can be edited and the project survives save/reopen.** |
+| 6 | MP4 export: headless rendering, ffmpeg encoding, presets and progress | A layered acceptance scene exports a playable MP4 with the expected frame count and matches the editor preview. |
+| 7 | Library growth and polish: more vector objects, particles, props, characters, brush/style presets and optional provider fallback | New objects have demo specs and tests; optional provider configuration works; polish checklist passes. |
+
+Milestone 5 is intentionally separate from Milestone 4. Do not use it as a reason to skip unfinished AI editing, version-history or SQLite acceptance criteria. Do not start Milestone 6 until Milestone 5 passes its acceptance test.
+
+## Milestone 5 — AI layered asset generation and character rigging
+
+**Goal:** turn a natural-language animation prompt into an editable scene composed of separately generated image assets and animated character parts. The user must be able to inspect, select, hide, reorder, transform and manually correct generated layers in the existing editor.
+
+**Generation choice:** add a mode named **Layered animation** (API value `layered`). Keep Vector, Painted and Video available and preserve their current behavior.
+
+**Example prompt:**
+
+> A girl is sleeping on a balcony at night. Make a 6-second animation. At 3 seconds, she wakes up and looks at the clock.
+
+**Expected scene plan and assets:**
+- `balcony_background`: full-canvas environment, generated without the girl or clock.
+- `clock`: independent prop layer with a stable position that can be referenced as an action target.
+- `girl_body`: body, clothing and limbs in the sleeping pose.
+- `girl_head`: head and hair as a separate transparent part, attached to the body at a neck pivot.
+- `girl_eyes` or alternate eye-state assets when extraction is reliable. For the first version, an alternate open-eye state is acceptable; do not let unreliable eye extraction block the rest of the rig.
+- Optional foreground layers, such as a railing or plant, when they must overlap the character.
+
+Do not split every noun in the prompt into its own layer. Separate objects when they need independent editing, animation, depth ordering or reuse. Keep ordinary decoration in the background.
+
+**Generation pipeline:**
+1. **Plan.** The language model returns a validated scene plan, asset manifest, relationships and timed actions. It does not create final image pixels.
+2. **Generate background.** Create the complete environment with separately generated subjects and props excluded.
+3. **Generate character reference.** Create the complete character in the requested pose and style. Keep this as a source/reference asset even if it is not a visible final layer.
+4. **Generate props.** Create independent items such as the clock, preserving style, placement and scale.
+5. **Segment parts.** Create actual pixel masks for the head/hair and body. Start with head-versus-body separation; add more parts only when reliable.
+6. **Reconstruct hidden regions.** Inpaint the neck/body area hidden by the original head and remove the original character from the background. Do not expose transparent holes when a part moves.
+7. **Create image layers.** Store RGBA images with correct alpha, original dimensions and canvas-space placement. Store image bytes outside the scene JSON.
+8. **Validate.** Check dimensions, non-empty alpha, mask alignment, edge halos, clipping, layer order and references before inserting the generated scene into the project.
+9. **Build rig and actions.** Assign parent-child relationships and pivots, resolve target positions and create deterministic keyframes.
+10. **Open editable scene.** Add generated groups and parts to the existing Layers docker and show action keyframes on the timeline.
+
+**Visual quality rules:**
+- A full-scene opaque image is not an acceptable character-part layer.
+- A bounding box, rectangular crop or feathered oval is not a valid final segmentation result.
+- Moving the head must not leave the original head visible underneath.
+- Reconstruct hidden areas so head movement does not reveal a hole at the neck or body.
+- Avoid hard white/black halos and checkerboard pixels in transparent assets.
+- Preserve original generated assets and derived masks so users can retry extraction without regenerating the scene.
+- If a mask, pivot or reconstruction is uncertain, flag it for review and provide manual correction rather than silently accepting a visibly broken rig.
+
+**Character rig:** implement a minimal 2D cut-out rig, not a full skeletal animation system. It must support character groups, parent-child parts, explicit pivots, local translation/rotation/scale, predictable z-order and transform composition. The user can select a part, move it, rotate it, adjust its pivot, hide it, lock it and reorder independent parts. For the example, the body is the root, the head is attached at the neck pivot, and the clock is not parented to the girl.
+
+Do not implement physics, inverse kinematics, mesh deformation or a complete bone editor in this milestone. For large head turns that cannot be represented convincingly by rotating one flat image, allow a generated alternate pose and a deterministic pose swap or short crossfade. Do not promise realistic 3D rotation from a 2D image.
+
+**Timed actions:** an action must identify a stable id, target part, action type, optional target object, start time, end time, optional hold-until time and deterministic easing. Support at least `look_at`.
+
+For the example:
+- 0–3s: girl remains asleep.
+- At 3s: she begins waking and turning.
+- 3–5s: head turns toward the clock; eyes open/shift if supported by the generated assets.
+- 5–6s: the final pose is held. Do not automatically return to sleep unless requested.
+
+Resolve the target object's scene position and calculate the desired 2D head orientation relative to the neck pivot. Clamp to a reasonable range and preserve the original pose. Convert the semantic action into keyframes/tracks before playback. A one-time action must not become an endless nod or sway loop.
+
+**Scene spec and persistence:**
+- Inspect the current Zod schema and every consumer before modifying it.
+- Add the smallest compatible representation for image assets, rig groups, parent ids, pivots and timed actions.
+- Keep image bytes in the existing asset storage and reference them by stable id/hash/path.
+- Preserve old version-1/example scenes and current vector, drawing, painted and video/footage layers.
+- Add an explicit migration/defaulting strategy if a schema version change is required.
+- Include generated asset references and metadata in save, autosave, version history, undo and restore. Avoid orphaned or broken references.
+- Validate missing assets, invalid parent ids, circular hierarchies, invalid pivots and action times outside the scene duration.
+
+**Suggested code responsibilities:** follow existing naming conventions; these are responsibilities, not a demand to create every filename.
+
+| Package | Responsibility |
+| --- | --- |
+| `packages/ai` | Scene/asset planner, asset-generation coordinator, segmentation and inpainting adapters, rig builder, action planner and validation/repair |
+| `packages/spec` | Zod definitions for image assets, rig metadata, pivots, hierarchy and timed actions; old-scene compatibility |
+| `packages/engine` | RGBA image/sprite rendering, parent-child transform composition, pivot handling and deterministic keyframe evaluation |
+| `apps/server` | Extend existing generation jobs/events, asset storage/serving, cancellation and project persistence |
+| `apps/web` | Layered animation choice, stage progress, generated character groups, part/pivot editing and action keyframes |
+
+Keep model adapters behind interfaces so the workflow can use configured ComfyUI nodes/models without coupling the rest of the application to one custom node pack. Use existing job/SSE mechanisms; do not introduce a second queue.
+
+**Suggested progress stages:** `plan`, `background`, `character`, `props`, `segment`, `reconstruct`, `rig`, `animate`, `validate`, `done`, `error`. Include per-stage/per-asset status and cancellation between heavyweight operations. Do not expose private prompts, credentials or secrets in UI events.
+
+**Failure handling:**
+- If a required mask fails, identify the part and allow retry or manual mask correction.
+- If inpainting is visibly invalid, retain the source asset and do not silently replace the current project.
+- If a pivot cannot be found reliably, suggest one and mark it for user review.
+- If the look-at target is missing or ambiguous, return a clear validation error or request correction; do not invent a target position.
+- If optional details such as separate eyes fail, keep a usable head layer and continue.
+- Never discard the user's current project after partial generation failure.
+
+**Acceptance test — girl sleeping on a balcony:**
+
+Input:
+
+`A girl is sleeping on a balcony at night. Create a 6-second animation. At 3 seconds, she wakes up and looks at the clock.`
+
+Done when:
+- [x] The background contains the balcony/night environment but no girl and no clock.
+- [x] The clock is its own isolated prop layer.
+- [x] The girl has a character group with at least separate body and head layers.
+- [x] The head has an editable neck pivot and is linked to the body through the rig hierarchy.
+- [x] The original head is not still visible in the underlying visible body/background image after separation.
+- [x] The area behind the separated head/body is reconstructed well enough that movement does not expose a hole.
+- [ ] Character identity, art style, lighting and proportions remain consistent across assets.
+- [x] The head/eyes begin a one-time look-at action at 3s, turn toward the clock and hold the final pose through 6s.
+- [x] Background and clock do not move as a side effect of head animation.
+- [x] Generated layers can be selected, hidden, reordered and transformed in the existing editor.
+- [x] Scrubbing at 2.9s, 3.0s, 4.0s, 5.0s and 5.9s shows the expected action phases.
+- [x] Rendering the same scene at the same timestamps twice produces identical output. External image generation is completed before deterministic playback begins.
+- [x] Save, close, reopen and play the project; all image assets, masks/metadata, rig relationships and keyframes remain intact.
+
+**Required tests:**
+- [x] Existing scene examples and saved-project fixtures still validate, load and render.
+- [x] New layered scene spec validates; missing asset references and invalid parent ids fail validation.
+- [x] Circular parent/rig relationships are rejected.
+- [x] PNG alpha and mask dimensions are checked; empty or misaligned masks return actionable errors.
+- [x] A controlled fixture proves the separated head is not still visible in the underlying image.
+- [x] Parent-child transform composition respects pivots and z-order.
+- [x] A `look_at` action starts at the requested time, reaches its final pose at `end` and holds instead of looping.
+- [x] Renderer output is deterministic at the same `t`, including after arbitrary scrubbing order.
+- [x] Asset references survive save/reopen, undo and version restore.
+- [x] Cancellation or segmentation/inpainting failure leaves the current scene unchanged.
+- [x] Playwright covers the layered mode, progress, Layers docker, pivot adjustment, timeline keyframes and save/reopen.
+
+**Out of scope:** full-body skeletal animation, inverse kinematics, physics, cloth simulation, realistic 3D rotation, generating a new diffusion frame for every timeline frame, automatic lip-sync/audio, perfect rotoscoping for every style, animating every finger/hair strand, replacing existing generation modes, MP4 export implementation and a major UI/renderer rewrite.
+
+Deliver a reliable first use case before adding more body parts or action types.
 
 ## Rules for the AI agent
 
 Follow these on every milestone:
+- Work on one milestone at a time. At the end, stop and report what you built, how to run it, what is not done and any decisions not covered by this brief.
+- Read the current implementation and tests before editing. Prefer small changes that fit existing abstractions.
+- Do not rewrite the app or replace working systems to make implementation easier.
+- Ask before changing the overall architecture, adding a major dependency or requiring a large model download not already configured.
+- Use TypeScript strict mode. Avoid `any`, especially in `packages/spec` and `packages/engine`.
+- Keep the renderer deterministic: no `Math.random()`, `Date.now()` or accumulated state in frame rendering. Use seeded randomness and evaluate animation from absolute time.
+- Keep prompts in the existing prompt directory and providers behind typed interfaces.
+- Never commit secrets or API keys. Document new environment variables in `.env.example`.
+- Keep the README current with installation, model/workflow setup, run and export instructions.
+- Build UI from the shared component library and tokens. Add stories for new reusable components where the project uses Storybook.
+- Before reporting a milestone done, run relevant tests, typecheck, lint and Playwright checks. Capture screenshots of changed screens at the repository's standard viewport sizes and fix polish issues.
 
-- Work one milestone at a time. At the end, stop and report: what you built, how to run it, what is not done, and any decision you made that this brief did not cover.
-- Ask before changing the scene spec format, adding a major dependency, or deviating from the folder structure.
-- TypeScript strict mode, no `any` in the `spec` and `engine` packages.
-- The engine must stay deterministic: no `Math.random()`, `Date.now()` or frame-to-frame state. Use the seeded RNG.
-- Every object file has a Zod param schema, defaults, and a one-sentence description, because the AI catalog is generated from them.
-- All art is original. Do not draw or name known characters, mascots, logos or artworks.
-- Never commit secrets; provide `.env.example` with every variable documented.
-- Keep the README current: install steps (Node, pnpm, Ollama, `ollama pull qwen2.5-coder:14b`), `pnpm dev`, and how to export.
+## Required tests
 
-* Build all UI from `packages/ui`. If a screen needs something new, add it to the library with a Storybook story first, then use it.
-* Before reporting a milestone done, take Playwright screenshots of every changed screen at 1366×768 and 1920×1080, check them against the polish checklist, and fix what fails.
-
-**Required tests:**
-
-- [ ] Every file in `packages/spec/examples/` validates against the schema.
-- [ ] Determinism: rendering the same spec at the same `t` twice gives an identical pixel hash.
-- [ ] Reference resolution: `$palette` and `@track` values resolve correctly; unknown references fail validation.
-- [ ] Track evaluation: easing, `step`, values before the first and after the last key.
-- [ ] AI layer: with a mocked provider, an invalid spec triggers repair and a valid one passes on the first try.
-- [ ] Export (Milestone 4): a 2-second test spec exports an MP4 with the expected frame count.
+- [x] Every scene example validates against the current schema.
+- [x] Determinism: rendering the same scene at the same `t` twice gives an identical pixel hash.
+- [x] Track evaluation: easing and values before the first and after the last key work as expected.
+- [x] Existing generation and edit tests continue to pass.
+- [x] Layered asset masks, alpha, pivots, hierarchy and timed actions pass the Milestone 5 tests above.
+- [x] Project persistence and asset references survive save/reopen and version restore.
+- [x] Export tests (Milestone 6) verify the expected frame count and preview parity.

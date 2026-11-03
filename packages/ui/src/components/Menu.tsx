@@ -3,6 +3,7 @@ import * as CM from "@radix-ui/react-context-menu";
 import * as DM from "@radix-ui/react-dropdown-menu";
 import { forwardRef, type ReactNode } from "react";
 import { cx } from "./cx";
+import { Tooltip } from "./Tooltip";
 
 export const menuContentCls = "float z-50 min-w-48 p-1 text-base text-fg outline-none";
 export const menuItemCls =
@@ -80,9 +81,11 @@ export function ContextMenu({ items, children }: { items: MenuAction[]; children
 export const Dropdown = forwardRef<HTMLButtonElement, { trigger: ReactNode; items: MenuAction[]; label: string }>(function Dropdown({ trigger, items, label }, ref) {
   return (
     <DM.Root>
-      <DM.Trigger ref={ref} aria-label={label} asChild>
-        {trigger}
-      </DM.Trigger>
+      <Tooltip label={label}>
+        <DM.Trigger ref={ref} aria-label={label} asChild>
+          {trigger}
+        </DM.Trigger>
+      </Tooltip>
       <DM.Portal>
         <DM.Content sideOffset={4} align="start" className={menuContentCls}>
           {items.map((it) => (

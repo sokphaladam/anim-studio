@@ -1,11 +1,10 @@
-import { Button, CardPicker, NumberField, StatusPill, cx, useToast } from "@anim/ui";
-import { ART_STYLES, STYLE_IDS, type StyleId } from "@anim/spec";
+import { Button, NumberField, StatusPill, cx, useToast } from "@anim/ui";
 import { Clapperboard, Plus, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useMemo, useState } from "react";
 import { SceneThumb } from "../components/SceneThumb";
 import { useAIStatus } from "../components/useAIStatus";
-import { generate, type Mode } from "../store/ai";
+import { generate } from "../store/ai";
 import { useStudio } from "../store";
 import { listProjects, openProject, type ProjectSummary } from "../store/projects";
 import { ASPECTS, EXAMPLES, blankScene, validSpecOrNull, type Aspect } from "../store/scenes";
@@ -13,22 +12,12 @@ import { AUTOSAVE_KEY } from "./Editor";
 
 const ASPECT_ICON = { "16:9": RectangleHorizontal, "9:16": RectangleVertical, "1:1": Square } as const;
 
-/** Sample painting for a style (public/styles/<id>.jpg); a gradient of its palette until one exists. */
-function StyleArt({ id }: { id: StyleId }) {
-  const [failed, setFailed] = useState(false);
-  const c = Object.values(ART_STYLES[id].palette);
-  if (failed) return <div className="h-full w-full" style={{ background: `linear-gradient(160deg, ${c[0]}, ${c[2]} 55%, ${c[4] ?? c[1]})` }} />;
-  return <img src={`/styles/${id}.jpg`} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />;
-}
-
-const STYLE_CARDS = STYLE_IDS.map((id) => ({ value: id, label: ART_STYLES[id].label, art: <StyleArt id={id} /> }));
-
 function usePainter() {
-  const [h, setH] = useState<{ installed: boolean; video: boolean } | null>(null);
+  const [h, setH] = useState<{ installed: boolean; video: boolean; layered: boolean } | null>(null);
   useEffect(() => {
     fetch("/api/health/painter")
-      .then((r) => r.json() as Promise<{ installed: boolean; video: boolean }>)
-      .then(setH, () => setH({ installed: false, video: false }));
+      .then((r) => r.json() as Promise<{ installed: boolean; video: boolean; layered: boolean }>)
+      .then(setH, () => setH({ installed: false, video: false, layered: false }));
   }, []);
   return h;
 }
@@ -64,14 +53,10 @@ export function Welcome() {
   const [prompt, setPrompt] = useState("");
   const ai = useAIStatus();
   const [duration, setDuration] = useState(12);
-  const [style, setStyle] = useState<StyleId>("flat-motion");
   const painter = usePainter();
-  const painterReady = painter?.installed ?? null;
-  const [modePick, setMode] = useState<Mode>("painted");
-  const available = (m: Mode) => m === "vector" || (m === "painted" ? !!painter?.installed : !!painter?.video);
-  const mode: Mode = available(modePick) ? modePick : painter?.installed ? "painted" : "vector";
-  const canGenerate = prompt.trim().length >= 3;
-  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, style, mode }, true);
+  const painterReady = painter ? painter.installed && painter.layered : null;
+  const canGenerate = prompt.trim().length >= 3 && painterReady !== false;
+  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   useEffect(() => {
@@ -107,45 +92,23 @@ export function Welcome() {
             rows={4}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe an animation… e.g. a cat sleeping on a rainy balcony at night, 12 seconds, lightning at 6s"
+            placeholder="Describe a lofi scene… e.g. a girl with headphones sipping tea at a treehouse window in autumn, a cat napping on a branch"
             aria-describedby="prompt-note"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) start();
             }}
-            className="w-full resize-none rounded-md border border-line bg-panel p-4 text-title outline-none transition-ui placeholder:text-fg-3 focus:border-line-strong"
+            className="w-full resize-none rounded-md border border-line bg-panel p-4 text-title outline-none transition-ui placeholder:text-fg-3 focus:border-accent"
           />
-          <p id="prompt-note" className="text-sm text-fg-3">{ai.status === "ok" ? "The local AI plans a storyboard, then builds the scene (about 1–2 minutes). Ctrl+Enter generates." : ai.fix ? `AI not ready: ${ai.fix}` : "AI not ready. You can still start a blank scene or open an example."}</p>
+          <p id="prompt-note" className="text-sm text-fg-3">{painterReady === false
+              ? "Generating needs the image painter and its segmentation models: run pnpm setup:painter --layered (about 11 GB the first time). You can still start a blank scene or open an example."
+              : ai.status === "ok"
+                ? "The AI plans the layers, paints each one and sets them moving in a seamless loop (about 3–5 minutes on your GPU). Ctrl+Enter generates."
+                : ai.fix
+                  ? `AI not ready: ${ai.fix}`
+                  : "AI not ready. You can still start a blank scene or open an example."}</p>
         </section>
 
         <section className="flex flex-col gap-3">
-          <h2 className="text-title font-semibold text-fg-2">
-            Art tradition <span className="text-sm font-normal text-fg-3">(every scene in the project follows it, so they look like one film)</span>
-          </h2>
-          <CardPicker label="Art tradition" cards={STYLE_CARDS} value={style} onChange={setStyle} />
-          <p className="text-sm text-fg-2">{ART_STYLES[style].blurb}</p>
-          <div role="radiogroup" aria-label="Look" className="flex flex-wrap items-center gap-2">
-            {(
-              [
-                ["video", "Animated video", "The painting comes alive frame by frame with a local video model (5–10 min per scene)."],
-                ["painted", "Painted by AI", "A local image model paints the scene; breathing, light and rain are animated on top."],
-                ["vector", "Vector (editable)", "Built from drawn objects you can move, recolor and animate."],
-              ] as const
-            ).map(([m, label, hint]) => (
-              <button
-                key={m}
-                type="button"
-                role="radio"
-                aria-checked={mode === m}
-                disabled={!available(m)}
-                title={!available(m) && painter ? (m === "video" ? "Run pnpm setup:painter --video to install the video model (about 18 GB)" : "Run pnpm setup:painter to install the image painter (about 9 GB)") : hint}
-                onClick={() => setMode(m)}
-                className={cx("rounded-md border px-3 py-1.5 text-sm transition-ui disabled:opacity-40", mode === m ? "border-accent bg-accent-soft" : "border-line bg-panel hover:bg-hover")}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="text-micro text-fg-3">{painterReady === false ? "Painted needs the image painter: run pnpm setup:painter" : mode === "painted" ? "Painting takes about a minute more" : mode === "video" ? "Painting, then 5–10 minutes of animation on your GPU" : ""}</span>
-          </div>
           <h2 className="text-title font-semibold text-fg-2">Size</h2>
           <div role="radiogroup" aria-label="Size preset" className="grid grid-cols-3 gap-3">
             {(Object.keys(ASPECTS) as Aspect[]).map((a) => {

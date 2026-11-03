@@ -51,7 +51,8 @@ export function rowsOf(spec: SceneSpec): Row[] {
         label: l.id,
         type: l.type,
         overlay: false,
-        keyframes: keysFor([l.params, l.transform], l.params),
+        // a layer's own keys plus those of the actions that move it (a loop shows its first cycle)
+        keyframes: keysFor([l.params, l.transform, (spec.actions ?? []).filter((a) => a.part === l.id).flatMap((a) => Object.values(a.tracks ?? {}).map((n) => `@${n}`))], l.params),
         drawn: (l.frames ?? []).map((f) => ({ frame: frameNo(spec, f.start), empty: f.strokes.length === 0 })).filter((d) => d.frame < n),
         source: l,
       }))
@@ -69,7 +70,8 @@ function Transport({ spec }: { spec: SceneSpec }) {
   const pick = (label: string, values: number[], cur: number, fmt: (v: number) => string, apply: (v: number) => void) =>
     values.map((v) => ({ id: `${label}${v}`, label: `${label}: ${fmt(v)}`, checked: cur === v, run: () => apply(v) }));
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2">
+    // @container: the clock drops its secondary readouts when the timeline is narrow (small screens, display scaling)
+    <div className="@container flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2">
       <IconButton label="First frame" shortcut="Home" icon={<SkipBack {...ICON} />} onClick={() => set({ t: r.start / spec.meta.fps, playing: false })} />
       <IconButton label="Previous frame" shortcut="," icon={<StepBack {...ICON} />} onClick={() => step(-1)} />
       <IconButton label={playing ? "Pause" : "Play"} shortcut="Enter" active={playing} icon={playing ? <Pause {...ICON} /> : <Play {...ICON} />} onClick={togglePlay} />
@@ -122,9 +124,10 @@ function Clock({ spec }: { spec: SceneSpec }) {
   return (
     <div className="ml-2 shrink-0 font-mono text-sm text-fg-2" aria-live="off">
       <span className="text-fg">{timecode(t, fps)}</span>
-      <span className="text-fg-3"> / {timecode(spec.meta.duration, fps)}</span>
-      <span className="ml-3 text-fg-3">frame </span>
-      <span className="text-fg">{frameOf(t, spec)}</span>
+      {/* the total is also in the Length field, the frame number on the ruler */}
+      <span className="hidden text-fg-3 @[68rem]:inline"> / {timecode(spec.meta.duration, fps)}</span>
+      <span className="ml-3 hidden text-fg-3 @[58rem]:inline">frame </span>
+      <span className="hidden text-fg @[58rem]:inline">{frameOf(t, spec)}</span>
     </div>
   );
 }

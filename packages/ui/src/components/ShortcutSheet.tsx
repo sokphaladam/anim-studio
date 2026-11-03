@@ -15,7 +15,7 @@ export function ShortcutSheet({ open, onOpenChange, menus, extra = [] }: { open:
             <ul>
               {g.rows.map((r) => (
                 <li key={r.label} className="flex h-7 items-center justify-between gap-4 text-base">
-                  <span className="truncate">{r.label}</span>
+                  <span className="truncate" title={r.label}>{r.label}</span>
                   <Kbd>{r.keys}</Kbd>
                 </li>
               ))}

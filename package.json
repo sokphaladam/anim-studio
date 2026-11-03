@@ -19,11 +19,10 @@
     "screenshots": "node scripts/screenshots.mjs",
     "compare": "node scripts/compare-reference.mjs",
     "e2e:flipbook": "node scripts/flipbook-e2e.mjs",
-    "generate": "pnpm --filter @anim/server exec tsx src/cli.ts",
+    "e2e:lofi": "node scripts/lofi-draw-e2e.mjs",
+    "generate:layered": "pnpm --filter @anim/server exec tsx src/layered-cli.ts",
     "setup:painter": "node scripts/setup-painter.mjs",
-    "style-samples": "pnpm --filter @anim/server exec tsx src/style-samples.ts",
-    "demo": "pnpm --filter @anim/server exec tsx src/demo.ts",
-    "e2e:generate": "node scripts/generate-e2e.mjs"
+    "e2e:layered": "node scripts/layered-e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "^22",

@@ -1,13 +1,13 @@
 import type { Layer, SceneSpec } from "@anim/spec";
 import "./objects";
 import { layerPivot } from "./bounds";
-import { ctxOf, drawFrame, frameIndexAt, type CanvasFactory, type Surface } from "./drawing";
-import { applyGrade } from "./grade";
+import { ctxOf, drawFrame, frameIndexAt, type CanvasFactory } from "./drawing";
 import { setCanvasFactory } from "./images";
 import { IDENTITY, mul, rotate, scale, translate, type Mat } from "./matrix";
 import { BLENDS } from "./objects/drawing";
 import { drawWith, getObject, makeEnv, parseParams, type Ctx2D } from "./registry";
 import { resolve } from "./resolve";
+import { actionOffsets } from "./actions";
 
 export { catalog, validateScene, objectTypes, getObject, defineObject, type ObjectDef, type Env, type ValidationResult } from "./registry";
 export { evalTrack, integrate, EASE } from "./tracks";
@@ -17,6 +17,7 @@ export { BRUSH_PRESETS, drawStroke, strokePath, frameIndexAt, drawingPivot, type
 export { invert, apply, mul, type Mat } from "./matrix";
 export { objectBounds, layerPivot, type Box } from "./bounds";
 export { registerImage, getImage, imageSources, frameUrl, type Bitmap } from "./images";
+export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, MAX_TURN } from "./actions";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */
 export const ENGINE_FONTS = ['italic 400 46px "Fraunces Variable"', "400 19px Figtree"];
@@ -44,7 +45,10 @@ export const defaultFactory: CanvasFactory = (w, h) => {
   return new OffscreenCanvas(w, h);
 };
 
-/** Maps a layer's own coordinates to scene coordinates: camera, then the layer transform (rotate/scale about the layer's pivot). */
+/**
+ * Maps a layer's own coordinates to scene coordinates: camera, then each rig ancestor's transform from the root down,
+ * then the layer's own (each rotates/scales about its own pivot).
+ */
 export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, make: CanvasFactory = defaultFactory): Mat {
   let m = IDENTITY;
   if (spec.camera) {
@@ -52,10 +56,18 @@ export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, mak
     const cx = cam.x ?? spec.meta.width / 2, cy = cam.y ?? spec.meta.height / 2;
     m = mul(mul(translate(cx, cy), scale(cam.zoom)), translate(-cx, -cy));
   }
-  if (layer?.transform) {
-    const tr = resolve(layer.transform, spec, t);
-    const [px, py] = layerPivot(spec, layer, make);
-    m = mul(m, mul(mul(mul(translate(tr.x + px, tr.y + py), rotate(tr.rotation)), scale(tr.scale)), translate(-px, -py)));
+  // a missing parent ends the chain; the length cap guards against cycles in unvalidated specs
+  const chain: Layer[] = [];
+  for (let l = layer; l && chain.length <= spec.layers.length; l = l.parent === undefined ? null : (spec.layers.find((x) => x.id === l!.parent) ?? null)) chain.unshift(l);
+  for (const l of chain) {
+    // actions add on top of the layer's own transform
+    const add = actionOffsets(spec, l.id, t);
+    if (!l.transform && !add) continue;
+    const tr = resolve({ x: 0, y: 0, rotation: 0, scale: 1, ...l.transform }, spec, t);
+    const [px, py] = layerPivot(spec, l, make);
+    const x = tr.x + (add?.x ?? 0), y = tr.y + (add?.y ?? 0), r = tr.rotation + (add?.rotation ?? 0), k = tr.scale + (add?.scale ?? 0);
+    const mirror: Mat = (add?.flip ?? 0) >= 0.5 ? [-1, 0, 0, 1, 0, 0] : IDENTITY;
+    m = mul(m, mul(mul(mul(mul(translate(x + px, y + py), rotate(r)), scale(k)), mirror), translate(-px, -py)));
   }
   return m;
 }
@@ -69,7 +81,6 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
   let spec = initial;
   // scratch surface for compositing drawing layers (cleared before every use, so it carries no state between frames)
   let scratch = make(canvas.width, canvas.height);
-  let gradeScratch: Surface | null = null;
 
   function drawDrawing(l: Layer, t: number, base: Mat, M: Mat, options?: RenderOptions) {
     const frames = l.frames ?? [];
@@ -136,13 +147,11 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
         }
         ctx.save();
         ctx.setTransform(...mul(base, M));
-        drawWith(ctx, def, parseParams(def, l.params), t, env);
+        let params = parseParams(def, l.params);
+        const fade = actionOffsets(spec, l.id, t)?.opacity ?? 0;
+        if (fade && "opacity" in params) params = { ...params, opacity: (resolve(params.opacity, spec, t) as number) + fade };
+        drawWith(ctx, def, params, t, env);
         ctx.restore();
-      }
-      // the art style's grade goes over the scene but under overlays, so titles and fades stay clean
-      if (spec.meta.style) {
-        if (!gradeScratch || gradeScratch.width !== canvas.width || gradeScratch.height !== canvas.height) gradeScratch = make(canvas.width, canvas.height);
-        applyGrade(ctx, canvas, spec.meta.style, Math.floor(t * spec.meta.fps + 1e-6), gradeScratch, make);
       }
       for (const o of spec.overlays) {
         const def = getObject(o.type);

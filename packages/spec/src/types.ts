@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST } from "./schema";
+import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST, AssetSchema as AS, ActionSchema as AC } from "./schema";
 
 /** A validated scene with defaults applied. */
 export type SceneSpec = z.output<typeof S>;
@@ -12,6 +12,8 @@ export type Beat = z.output<typeof B>;
 export type Ease = z.output<typeof E>;
 export type DrawingFrame = z.output<typeof DF>;
 export type Stroke = z.output<typeof ST>;
+export type Asset = z.output<typeof AS>;
+export type Action = z.output<typeof AC>;
 
 /** Param type after "@track" / "$palette" references are resolved to plain values. */
 export type Resolved<T> = T extends `@${string}`

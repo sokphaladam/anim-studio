@@ -4,7 +4,6 @@ import { tinykeys } from "tinykeys";
 import { useShallow } from "zustand/react/shallow";
 import { frameOf, useStudio } from "../store";
 import { deleteLayer, findLayer, heldIndexAt, moveLayer, setFps } from "../store/edit";
-import { ART_STYLES, STYLE_IDS } from "@anim/spec";
 import { animatePainting, paintingToVideo } from "../store/ai";
 import { saveProject } from "../store/projects";
 import { EXAMPLES, blankScene, overlayKey } from "../store/scenes";
@@ -32,11 +31,10 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
   const toast = useToast();
   // only the fields that change labels/checked/disabled; actions read fresh state via get()
   const v = useStudio(
-    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, style: s.spec?.meta.style, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection })),
+    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection })),
   );
   const groups = useMemo<Group[]>(() => {
     const s = get();
-    const later = (m: number) => ({ disabled: true, hint: `Milestone ${m}` });
     const sel = v.selected;
     const selIndex = v.layers?.findIndex((l) => l.id === sel) ?? -1;
     return [
@@ -131,19 +129,10 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
           { id: "ai.animatePainting", label: "Make the painting move", disabled: !v.layers?.some((l) => l.type === "painting"), run: () => (extra.focusAI(), animatePainting()) },
           { id: "ai.paintingToVideo", label: "Turn the painting into video (frame by frame)", disabled: !v.layers?.some((l) => l.type === "painting"), run: () => (extra.focusAI(), paintingToVideo()) },
           "separator",
-          ...STYLE_IDS.map((id) => ({
-            id: `ai.style.${id}`,
-            label: `Art tradition: ${ART_STYLES[id].label}`,
-            checked: v.style === id,
-            run: () => {
-              const sp = get().spec;
-              if (sp) s.commit(`Art tradition: ${ART_STYLES[id].label}`, { ...sp, meta: { ...sp.meta, style: id } });
-            },
-          })),
-          { id: "ai.generate", label: "Generate scene from prompt…", ...later(3), run: () => {} },
+          { id: "ai.generate", label: "Generate scene from prompt…", run: extra.focusAI },
         ],
       },
-      { label: "Export", items: [{ id: "export.mp4", label: "Export MP4…", shortcut: "Ctrl+E", ...later(5), run: () => {} }] },
+      { label: "Export", items: [{ id: "export.mp4", label: "Export MP4…", shortcut: "Ctrl+E", keys: "$mod+KeyE", disabled: !v.duration, run: () => s.set({ ui: { ...get().ui, export: true } }) }] },
     ];
   }, [v, extra, toast]);
 

@@ -6,6 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "bootstrap": "pnpm install && node -e \"fs.existsSync('.env')||fs.copyFileSync('.env.example','.env')\" && pnpm build && node scripts/setup-ai.mjs && node scripts/setup-painter.mjs --layered",
     "predev": "node scripts/setup-ai.mjs --no-pull",
     "dev": "pnpm --parallel --filter @anim/web --filter @anim/server dev",
     "build": "pnpm -r build",

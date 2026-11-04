@@ -6,6 +6,8 @@ A local, Krita-style 2D animation studio in the browser. The AI plans a layered 
 
 ## Setup
 
+**One command:** install Node 20+ and pnpm 9, then run `pnpm bootstrap`, then `pnpm dev`. It installs packages, creates `.env` from `.env.example`, builds everything, installs Ollama and pulls the model, and (Windows + NVIDIA only) installs the ComfyUI painter (~12 GB). It's safe to re-run. The steps below are what it does, if you'd rather do them one at a time.
+
 1. Node 20+ (`nvm use 22`) and pnpm 9 (`npm i -g pnpm@9`).
 2. `pnpm install`. On Windows, `better-sqlite3` may compile from source (a few minutes; needs the Visual Studio C++ build tools if there is no prebuilt binary for your Node version).
 3. Ollama (needed from Milestone 3) is set up automatically: `pnpm dev` installs it if missing (winget on Windows, Homebrew on macOS, the official script on Linux) and starts it, and the server then downloads `OLLAMA_MODEL` in the background (progress shows in the AI status pill). Run `pnpm setup:ai` to do it all up front, including the model download in the terminal. Set `OLLAMA_AUTO_SETUP=0` to manage Ollama yourself (install from ollama.com, then `ollama pull qwen2.5-coder:14b`).

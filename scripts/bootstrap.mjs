@@ -40,7 +40,7 @@ must(...p("build"));
 log("setting up Ollama + model");
 must("node", ["scripts/setup-ai.mjs"]);
 
-log("setting up the painter (ComfyUI, Windows + NVIDIA only)");
+log("setting up the image painter (ComfyUI: portable NVIDIA build on Windows, git + venv on macOS/Linux)");
 must("node", ["scripts/setup-painter.mjs", "--layered"]);
 
 // e2e/screenshot scripts fall back to a local Chrome, so a failed download isn't fatal

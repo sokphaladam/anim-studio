@@ -53,7 +53,8 @@ async function createWindow() {
 }
 
 // the app has its own File/Edit/... menus; keep F12 / Ctrl+Shift+I for devtools in dev
-Menu.setApplicationMenu(app.isPackaged ? null : Menu.buildFromTemplate([{ label: "Dev", submenu: [{ role: "reload" }, { role: "toggleDevTools" }] }]));
+// editMenu stays even when packaged: without it macOS has no Cmd+C/V/X/A in text fields
+Menu.setApplicationMenu(Menu.buildFromTemplate([...(process.platform === "darwin" ? [{ role: "appMenu" }] : []), { role: "editMenu" }, ...(app.isPackaged ? [] : [{ label: "Dev", submenu: [{ role: "reload" }, { role: "toggleDevTools" }] }])]));
 app.on("second-instance", () => BrowserWindow.getAllWindows()[0]?.focus());
 app.on("window-all-closed", () => app.quit());
 app.whenReady().then(createWindow).catch((e) => {

@@ -6,7 +6,7 @@ A local, Krita-style 2D animation studio in the browser. The AI plans a layered 
 
 ## Setup
 
-**One command:** install Node 20+ and pnpm 9, then run `pnpm bootstrap`, then `pnpm dev`. It installs packages, creates `.env` from `.env.example`, builds everything, installs Ollama and pulls the model, and (Windows + NVIDIA only) installs the ComfyUI painter (~12 GB). It's safe to re-run. The steps below are what it does, if you'd rather do them one at a time.
+**One command:** install Node 20+, run `npm run bootstrap` (or `pnpm bootstrap`), then `pnpm dev`. It fetches pnpm if missing, installs packages, creates `.env` from `.env.example`, builds everything, installs Ollama and pulls the model, (Windows + NVIDIA only) installs the ComfyUI painter (~12 GB), installs Playwright's Chromium, and boots the API once to check it works. It's safe to re-run. The steps below are what it does, if you'd rather do them by hand.
 
 1. Node 20+ (`nvm use 22`) and pnpm 9 (`npm i -g pnpm@9`).
 2. `pnpm install`. On Windows, `better-sqlite3` may compile from source (a few minutes; needs the Visual Studio C++ build tools if there is no prebuilt binary for your Node version).

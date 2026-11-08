@@ -1,41 +1,80 @@
-// Installs the local image painter: ComfyUI (Windows portable, NVIDIA) + the Animagine XL 4.0 checkpoint (~10 GB total).
+// Installs the local image painter: ComfyUI + the Animagine XL 4.0 checkpoint (~10 GB total). Which ComfyUI depends on the OS:
+//   Windows       the portable NVIDIA build (its own Python + CUDA PyTorch)
+//   macOS / Linux a git checkout of the same release with its own .venv (PyTorch uses Apple's GPU via MPS on macOS, CUDA on Linux)
 // Usage: pnpm setup:painter [--video] [--layered]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import { arch } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 if (existsSync(join(root, ".env"))) process.loadEnvFile(join(root, ".env"));
 const dir = process.env.COMFY_DIR || join(root, "data", "comfyui");
-const COMFY_URL = "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.43.0/ComfyUI_windows_portable_nvidia.7z";
+const TAG = "v0.43.0";
+const COMFY_URL = `https://github.com/Comfy-Org/ComfyUI/releases/download/${TAG}/ComfyUI_windows_portable_nvidia.7z`;
 const MODEL_URL = "https://huggingface.co/cagliostrolab/animagine-xl-4.0/resolve/main/animagine-xl-4.0-opt.safetensors";
+const win = process.platform === "win32";
 const log = (m) => console.log(`[setup:painter] ${m}`);
+const sh = (cmd, args, opts = {}) => {
+  log(`$ ${cmd} ${args.join(" ")}`);
+  if (spawnSync(cmd, args, { stdio: "inherit", ...opts }).status !== 0) throw new Error(`${cmd} ${args[0]} failed; fix the error above and re-run pnpm setup:painter.`);
+};
 
-if (process.platform !== "win32") {
-  log("Automatic setup is Windows-only. Install ComfyUI yourself, put animagine-xl-4.0-opt.safetensors in models/checkpoints, and set COMFY_URL.");
-  process.exit(0);
-}
+if (process.env.CI) process.exit(0);
+if (process.platform === "darwin" && arch() !== "arm64") log("Intel Mac: no supported GPU, ComfyUI will paint on the CPU and be very slow.");
+if (process.platform === "linux" && spawnSync("nvidia-smi", [], { stdio: "ignore" }).status !== 0) log("No NVIDIA GPU found: ComfyUI will paint on the CPU and be very slow.");
 
-/** curl.exe ships with Windows 10+; -C - resumes a partial download. */
+/** curl ships with Windows 10+, macOS and most Linux; -C - resumes a partial download. */
 function download(url, file) {
   log(`downloading ${url.split("/").pop()} …`);
-  const r = spawnSync("curl.exe", ["-L", "--fail", "-C", "-", "--retry", "5", "-o", file, url], { stdio: "inherit" });
+  const r = spawnSync(win ? "curl.exe" : "curl", ["-L", "--fail", "-C", "-", "--retry", "5", "-o", file, url], { stdio: "inherit" });
   if (r.status !== 0) throw new Error(`Download failed: ${url}. Re-run pnpm setup:painter to resume.`);
 }
 
+/** First Python 3.10–3.13 on PATH (the versions PyTorch and ComfyUI support), or null. */
+function findPython() {
+  for (const py of ["python3.12", "python3.13", "python3.11", "python3.10", "python3"])
+    if (spawnSync(py, ["-c", "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)"], { stdio: "ignore" }).status === 0) return py;
+  return null;
+}
+
 mkdirSync(dir, { recursive: true });
+// the models alone are ~9 GB (+9 GB for --video); stop before filling the disk rather than halfway through a download
+const freeGB = (({ bavail, bsize }) => (bavail * bsize) / 1e9)(statfsSync(dir));
 const portable = join(dir, "ComfyUI_windows_portable");
-if (!existsSync(join(portable, "ComfyUI", "main.py"))) {
-  const archive = join(dir, "comfyui.7z");
-  download(COMFY_URL, archive);
-  log("extracting …");
-  const sevenZip = "C:\\Program Files\\7-Zip\\7z.exe";
-  // Windows' built-in tar (libarchive) reads 7z too, just slower
-  const r = existsSync(sevenZip) ? spawnSync(sevenZip, ["x", "-y", `-o${dir}`, archive], { stdio: "ignore" }) : spawnSync("tar", ["-xf", archive, "-C", dir], { stdio: "inherit" });
-  if (r.status !== 0 || !existsSync(join(portable, "ComfyUI", "main.py"))) throw new Error("Extracting ComfyUI failed");
-  rmSync(archive);
+const comfy = win ? join(portable, "ComfyUI") : join(dir, "ComfyUI");
+const models = join(comfy, "models");
+if (!existsSync(join(models, "checkpoints", "animagine-xl-4.0-opt.safetensors")) && freeGB < 14)
+  throw new Error(`Only ${freeGB.toFixed(1)} GB free in ${dir}; the painter needs about 14 GB. Free some space or set COMFY_DIR to another drive.`);
+if (win) {
+  if (!existsSync(join(comfy, "main.py"))) {
+    const archive = join(dir, "comfyui.7z");
+    download(COMFY_URL, archive);
+    log("extracting …");
+    const sevenZip = "C:\\Program Files\\7-Zip\\7z.exe";
+    // Windows' built-in tar (libarchive) reads 7z too, just slower
+    const r = existsSync(sevenZip) ? spawnSync(sevenZip, ["x", "-y", `-o${dir}`, archive], { stdio: "ignore" }) : spawnSync("tar", ["-xf", archive, "-C", dir], { stdio: "inherit" });
+    if (r.status !== 0 || !existsSync(join(comfy, "main.py"))) throw new Error("Extracting ComfyUI failed");
+    rmSync(archive);
+  }
+} else {
+  if (!existsSync(join(comfy, "main.py"))) sh("git", ["clone", "--depth", "1", "--branch", TAG, "https://github.com/Comfy-Org/ComfyUI.git", comfy]);
+  const venv = join(comfy, ".venv");
+  const python = join(venv, "bin", "python");
+  const done = join(venv, ".anim-studio-deps"); // written once pip finished, so an interrupted install is redone
+  if (!existsSync(done)) {
+    if (!existsSync(python)) {
+      const base = findPython();
+      if (!base) throw new Error(`ComfyUI needs Python 3.10–3.13. Install it (macOS: brew install python@3.12), then re-run pnpm setup:painter.`);
+      sh(base, ["-m", "venv", venv]);
+    }
+    sh(python, ["-m", "pip", "install", "--upgrade", "pip"]);
+    // PyPI's macOS PyTorch wheels include the MPS (Apple GPU) backend; on Linux they are the CUDA build
+    sh(python, ["-m", "pip", "install", "-r", join(comfy, "requirements.txt")]);
+    writeFileSync(done, TAG);
+  }
 }
 /** Hugging Face publishes each file's SHA-256 as X-Linked-ETag; a resumed download can be garbled with the right size. */
 async function expectedHash(url) {
@@ -65,7 +104,7 @@ async function install(url, file) {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!existsSync(file)) {
       download(url, `${file}.part`);
-      spawnSync("cmd", ["/c", "move", "/y", `${file}.part`, file], { stdio: "ignore" });
+      renameSync(`${file}.part`, file);
     }
     if (!want) return; // offline check unavailable: trust the file
     log(`verifying ${basename(file)} …`);
@@ -77,7 +116,6 @@ async function install(url, file) {
   }
 }
 
-const models = join(portable, "ComfyUI", "models");
 await install(MODEL_URL, join(models, "checkpoints", "animagine-xl-4.0-opt.safetensors"));
 
 // --video: Wan 2.2 TI2V 5B image-to-video (~18 GB, Apache-2.0). VIDEO_MODELS_DIR can put the text encoder and VAE
@@ -98,6 +136,6 @@ if (process.argv.includes("--layered")) {
 const extra = [];
 if (process.env.VIDEO_MODELS_DIR) extra.push(`anim_studio:\n  base_path: ${process.env.VIDEO_MODELS_DIR.replaceAll("\\", "/")}\n  vae: vae\n  text_encoders: text_encoders`);
 // DIFFUSERS_DIR: a folder of diffusers models holding stable-diffusion-xl-base-1.0, which the Flat 2D motion graphics style paints with
-if (process.env.DIFFUSERS_DIR) extra.push(`anim_studio_diffusers:\n  diffusers: ${process.env.DIFFUSERS_DIR.replaceAll("\\", "/")}`);
-if (extra.length) writeFileSync(join(portable, "ComfyUI", "extra_model_paths.yaml"), `${extra.join("\n")}\n`);
-log(`ready: ${portable}. The app starts ComfyUI by itself when it paints.`);
+if (process.env.DIFFUSERS_DIR && existsSync(process.env.DIFFUSERS_DIR)) extra.push(`anim_studio_diffusers:\n  diffusers: ${process.env.DIFFUSERS_DIR.replaceAll("\\", "/")}`);
+if (extra.length) writeFileSync(join(comfy, "extra_model_paths.yaml"), `${extra.join("\n")}\n`);
+log(`ready: ${comfy}. The app starts ComfyUI by itself when it paints.`);

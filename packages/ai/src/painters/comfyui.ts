@@ -131,9 +131,22 @@ function workflow(a: PaintArgs) {
   };
 }
 
-/** Whether ComfyUI answers, and whether a portable install exists that can be started. */
+/**
+ * Where ComfyUI is installed in `dir` and how to start it: the Windows portable NVIDIA build, or a git checkout
+ * with its own .venv (macOS uses Apple's GPU via PyTorch MPS, Linux CUDA). Both are made by pnpm setup:painter.
+ */
+export function comfyInstall(dir: string) {
+  const portable = join(dir, "ComfyUI_windows_portable");
+  if (existsSync(join(portable, "ComfyUI", "main.py")))
+    return { comfy: join(portable, "ComfyUI"), python: join(portable, "python_embeded", "python.exe"), args: ["-s", join(portable, "ComfyUI", "main.py"), "--windows-standalone-build"], cwd: portable, check: `${portable}\\run_nvidia_gpu.bat` };
+  const comfy = join(dir, "ComfyUI");
+  const python = process.platform === "win32" ? join(comfy, ".venv", "Scripts", "python.exe") : join(comfy, ".venv", "bin", "python");
+  return { comfy, python, args: [join(comfy, "main.py")], cwd: comfy, check: `${python} ${join(comfy, "main.py")}` };
+}
+
+/** Whether ComfyUI answers, and whether an install exists that can be started. */
 export async function comfyHealth(opts: { url: string; dir: string }) {
-  const models = join(opts.dir, "ComfyUI_windows_portable", "ComfyUI", "models");
+  const models = join(comfyInstall(opts.dir).comfy, "models");
   const installed = existsSync(join(models, "checkpoints", CHECKPOINT));
   const video = existsSync(join(models, "diffusion_models", VIDEO_MODEL));
   const layered = existsSync(join(models, "checkpoints", SEGMENT_MODEL)) && existsSync(join(models, "background_removal", BG_REMOVAL_MODEL));
@@ -146,7 +159,7 @@ export async function comfyHealth(opts: { url: string; dir: string }) {
 }
 
 /**
- * ComfyUI at `url`, started from the portable install in `dir` when it isn't running.
+ * ComfyUI at `url`, started from the install in `dir` (see comfyInstall) when it isn't running.
  * After each image the models are unloaded so the language model gets the GPU back (12 GB can't hold both).
  */
 export function comfyui(opts: { url: string; dir: string }): Painter {
@@ -158,9 +171,9 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
     if (h.running) return;
     if (!h.installed) throw new AIError("The image painter isn't installed", "Run pnpm setup:painter (downloads about 9 GB), or choose Vector.");
     starting ??= (async () => {
-      const root = join(opts.dir, "ComfyUI_windows_portable");
-      spawn(join(root, "python_embeded", "python.exe"), ["-s", join(root, "ComfyUI", "main.py"), "--windows-standalone-build", "--disable-auto-launch", "--port", new URL(url).port || "8188"], {
-        cwd: root,
+      const c = comfyInstall(opts.dir);
+      spawn(c.python, [...c.args, "--disable-auto-launch", "--port", new URL(url).port || "8188"], {
+        cwd: c.cwd,
         detached: true,
         stdio: "ignore",
         windowsHide: true,
@@ -170,7 +183,7 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
         if ((await comfyHealth({ url, dir: opts.dir })).running) return;
         await sleep(1000);
       }
-      throw new AIError("The image painter didn't start", `Check that ComfyUI runs: ${root}\\run_nvidia_gpu.bat`);
+      throw new AIError("The image painter didn't start", `Check that ComfyUI runs: ${comfyInstall(opts.dir).check}`);
     })().finally(() => (starting = null));
     await starting;
   }
@@ -196,7 +209,11 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
           const lowRam = /not enough memory|DefaultCPUAllocator/i.test(cause ?? "");
           throw new AIError(
             `The ${what} failed${cause ? ` in ${err?.node_type ?? "a node"}: ${cause.slice(0, 200)}` : ""}`,
-            lowRam ? "The PC ran out of memory. Close other apps and try again, or enlarge the Windows page file (System › About › Advanced system settings › Performance › Virtual memory)." : "Try again; if it keeps failing, check the ComfyUI window for details.",
+            lowRam
+              ? process.platform === "win32"
+                ? "The PC ran out of memory. Close other apps and try again, or enlarge the Windows page file (System › About › Advanced system settings › Performance › Virtual memory)."
+                : "The computer ran out of memory. Close other apps and try again."
+              : "Try again; if it keeps failing, check the ComfyUI window for details.",
           );
         }
         // images come back under "images"; videos under "images" (animated), "videos" or "gifs" depending on the node

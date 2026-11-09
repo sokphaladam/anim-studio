@@ -1,4 +1,4 @@
-import { AIError, findMotions, maskFrom, recut, reviewOf, type AnimateFn, type Raster, type LayeredTools, type Painter, type Provider } from "@anim/ai";
+import { AIError, findMotions, maskFrom, recut, reviewOf, type AnimateFn, type ClipStats, type Footage, type Raster, type LayeredTools, type Painter, type Provider } from "@anim/ai";
 import { createCanvas, ImageData, loadImage } from "@napi-rs/canvas";
 import { paintingBoxToScene } from "@anim/engine";
 import { CleanupSchema } from "@anim/spec";
@@ -47,20 +47,44 @@ export function imageStore(dir: string) {
     layeredWith(painter: Painter): LayeredTools {
       return { painter, store: save, decode, encode };
     },
-    /** Animates with the painter's video model; the MP4 is split into JPEG frames the engine plays one by one. */
-    animateWith(painter: Painter): AnimateFn | undefined {
-      if (!painter.animate) return undefined;
+    /** Animates with a video model (the painter's, or a cloud one); the MP4 is split into JPEG frames the engine plays one by one. */
+    animateWith(animate: Painter["animate"]): AnimateFn | undefined {
+      if (!animate) return undefined;
       return async (args, signal) => {
-        const mp4 = await painter.animate!({ ...args, signal });
+        const mp4 = await animate({ ...args, signal });
         const id = createHash("sha256").update(mp4).digest("hex").slice(0, 24);
         const out = join(dir, id);
         mkdirSync(out, { recursive: true });
         writeFileSync(join(dir, `${id}.mp4`), mp4);
-        const r = spawnSync(ffmpegBin, ["-v", "error", "-y", "-i", join(dir, `${id}.mp4`), "-q:v", "3", join(out, "%03d.jpg")]);
+        const r = spawnSync(ffmpegBin, ["-v", "error", "-y", "-i", join(dir, `${id}.mp4`), "-vf", `fps=${args.fps}`, "-q:v", "3", join(out, "%03d.jpg")]);
         const count = readdirSync(out).filter((f) => FRAME.test(f)).length;
         if (r.status !== 0 || !count) throw new AIError("Couldn't split the video into frames", r.stderr?.toString().slice(-300));
         return { frames: `/api/images/${id}/`, count, fps: args.fps };
       };
+    },
+    /** Measures a stored clip for its quality checks: size, and brightness and frame-to-frame change at five points. */
+    async clipStats(f: Footage): Promise<ClipStats> {
+      const folder = join(dir, f.frames.replace(/^\/api\/images\//, ""));
+      const S = 32; // small: brightness and change don't need detail
+      const c = createCanvas(S, S), g = c.getContext("2d");
+      const grey = async (i: number) => {
+        const img = await loadImage(readFileSync(join(folder, `${String(i + 1).padStart(3, "0")}.jpg`)));
+        g.drawImage(img, 0, 0, S, S);
+        const d = g.getImageData(0, 0, S, S).data, out = new Float32Array(S * S);
+        for (let p = 0; p < out.length; p++) out[p] = (0.299 * d[p * 4] + 0.587 * d[p * 4 + 1] + 0.114 * d[p * 4 + 2]) / 255;
+        return { out, width: img.width, height: img.height };
+      };
+      const first = await grey(0);
+      const samples: ClipStats["samples"] = [];
+      for (const at of [0, 0.25, 0.5, 0.75, 1]) {
+        const i = Math.max(0, Math.min(f.count - 2, Math.round(at * (f.count - 1))));
+        const a = (await grey(i)).out, b = f.count > 1 ? (await grey(i + 1)).out : a;
+        const mean = a.reduce((s, v) => s + v, 0) / a.length;
+        const spread = Math.sqrt(a.reduce((s, v) => s + (v - mean) ** 2, 0) / a.length);
+        const jump = a.reduce((s, v, p) => s + Math.abs(v - b[p]), 0) / a.length;
+        samples.push({ at: i / f.fps, mean, spread, jump });
+      }
+      return { count: f.count, fps: f.fps, width: first.width, height: first.height, samples };
     },
     /** The bytes of a stored painting, from its /api/images/<name>.png src; null if unknown. */
     read(src: string): Uint8Array | null {

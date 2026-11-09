@@ -4,7 +4,7 @@ import { tinykeys } from "tinykeys";
 import { useShallow } from "zustand/react/shallow";
 import { frameOf, useStudio } from "../store";
 import { deleteLayer, findLayer, heldIndexAt, moveLayer, setFps } from "../store/edit";
-import { animatePainting, paintingToVideo } from "../store/ai";
+import { animatePainting, paintingToVideo, redoShots } from "../store/ai";
 import { saveProject } from "../store/projects";
 import { EXAMPLES, blankScene, overlayKey } from "../store/scenes";
 import { deleteSelection } from "../tools/select";
@@ -31,7 +31,7 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
   const toast = useToast();
   // only the fields that change labels/checked/disabled; actions read fresh state via get()
   const v = useStudio(
-    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection })),
+    useShallow((s) => ({ tool: s.tool, loop: s.loop, playing: s.playing, fps: s.spec?.meta.fps, duration: s.spec?.meta.duration, selected: s.selected, layers: s.spec?.layers, canUndo: s.past.length > 0, canRedo: s.future.length > 0, onion: s.onion.on, autoFrame: s.autoFrame, autoKey: s.autoKey, hasSelection: !!s.selection, redoable: !!s.spec?.cinematic?.some((c) => c.status !== "ready") })),
   );
   const groups = useMemo<Group[]>(() => {
     const s = get();
@@ -130,6 +130,7 @@ export function useCommands(extra: { resetLayout: () => void; focusAI: () => voi
           { id: "ai.paintingToVideo", label: "Turn the painting into video (frame by frame)", disabled: !v.layers?.some((l) => l.type === "painting"), run: () => (extra.focusAI(), paintingToVideo()) },
           "separator",
           { id: "ai.generate", label: "Generate scene from prompt…", run: extra.focusAI },
+          { id: "ai.redoShots", label: "Redo cinematic shots that failed or need review", disabled: !v.redoable, run: () => (extra.focusAI(), redoShots()) },
         ],
       },
       { label: "Export", items: [{ id: "export.mp4", label: "Export MP4…", shortcut: "Ctrl+E", keys: "$mod+KeyE", disabled: !v.duration, run: () => s.set({ ui: { ...get().ui, export: true } }) }] },

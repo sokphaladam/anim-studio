@@ -464,4 +464,3 @@ Pass conditions:
 
 Build **editable-first, dual-output generation**. Keep the current local pipeline as the dependable source of the editable project and deterministic master. Add Runway Dev as an opt-in cloud `VideoProvider`, initially benchmarking Seedance 2.5 and Kling 4.0 against the existing local Wan 2.2 path. Use one shared storyboard/asset/motion plan to produce both branches, then inspect and present both outputs honestly. This provides one-prompt convenience without sacrificing editability, local-first operation, or engineering control.
 
-runway api key: key_13e4fcc827a5dfb2be050a6e95f2b7e3f31f872160ee385393aea4f7aad90e13a3b3f0a2080c5c77f9f8e5f9ec7b88d403c300637c5ac11461d01788e4499ce4

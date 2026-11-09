@@ -290,6 +290,29 @@ export function collectRefs(value: unknown, path: (string | number)[] = [], out:
   return out;
 }
 
+/**
+ * A cinematic AI video clip made from the same plan as the editable scene: a separate deliverable, edited only as a clip
+ * (never as character parts). Frames are stored like footage layers'.
+ */
+export const CinematicShotSchema = z.object({
+  id: z.string().min(1),
+  start: z.number().min(0),
+  end: z.number().positive(),
+  /** Missing when every attempt failed: the shot is kept so it can be retried alone. */
+  footage: z.object({ frames: z.string().min(1), count: z.number().int().min(1), fps: z.number().positive() }).optional(),
+  /** ready = passed its checks; review = made, but a person should look (why: `review`); failed = no usable clip. */
+  status: z.enum(["ready", "review", "failed"]).default("ready"),
+  review: z.string().optional(),
+  checks: z.array(z.object({ name: z.string(), status: z.enum(["pass", "review", "fail"]), note: z.string().optional() })).default([]),
+  attempts: z.number().int().min(0).default(1),
+  /** What made it ("runway seedance2_5", "local wan2.2") and, for paid ones, the provider task and its estimated cost. */
+  source: z.string().min(1),
+  taskId: z.string().optional(),
+  costUsd: z.number().min(0).optional(),
+  /** The full video prompt, so a retry asks for the same shot. */
+  prompt: z.string().default(""),
+});
+
 export const SceneSpecSchema = z
   .object({
     version: z.literal(1),
@@ -307,6 +330,7 @@ export const SceneSpecSchema = z
     ik: z.array(IKSchema).optional(),
     switches: z.array(SwitchSchema).optional(),
     look: LookSchema.optional(),
+    cinematic: z.array(CinematicShotSchema).optional(),
   })
   .superRefine((s, ctx) => {
     const dur = s.meta.duration;

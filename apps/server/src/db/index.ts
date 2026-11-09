@@ -74,6 +74,8 @@ export function createStore(file: string) {
         return { spec: prev.spec, version: prev.id, undid: cur.label };
       })();
     },
+    /** Deletes a project and all its versions. Images stay: they are content-addressed and may be shared. False if not found. */
+    remove: (id: string) => db.delete(projects).where(eq(projects.id, id)).run().changes > 0,
     close: () => sqlite.close(),
   };
 }

@@ -36,6 +36,8 @@ export function projectRoutes(app: FastifyInstance, store: Store, provider: () =
     return version === null ? missing(reply) : { version };
   });
 
+  app.delete<Id>("/api/projects/:id", async (req, reply) => (store.remove(req.params.id) ? reply.code(204).send() : missing(reply)));
+
   app.post<Id>("/api/projects/:id/undo", async (req, reply) => {
     if (!store.get(req.params.id)) return missing(reply);
     return store.undo(req.params.id) ?? reply.code(409).send({ error: "Nothing to undo" });

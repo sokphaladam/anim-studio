@@ -1,4 +1,4 @@
-import type { SceneSpec } from "@anim/spec";
+import type { CinematicShot, SceneSpec } from "@anim/spec";
 import { useStudio } from ".";
 import { requestEdit, saveProject } from "./projects";
 import { profilesOf } from "./edit";
@@ -6,7 +6,7 @@ import { overlayKey } from "./scenes";
 
 /** Layered generation's stages, in pipeline order. */
 export const LAYERED_STAGES = ["plan", "background", "character", "segment", "reconstruct", "rig", "props", "animate", "validate"] as const;
-export type Phase = "storyboard" | "paint" | "video" | "spec" | "repair" | "edit" | (typeof LAYERED_STAGES)[number];
+export type Phase = "storyboard" | "paint" | "video" | "spec" | "repair" | "edit" | "cinematic" | (typeof LAYERED_STAGES)[number];
 export type AssetStatus = { id: string; label: string; status: "running" | "done" | "review" | "skipped" | "failed"; message?: string };
 export type Generation = {
   jobId: string | null;
@@ -42,7 +42,7 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
  * Asks the server to generate a scene and follows its progress over SSE. The storyboard's beats land on the
  * timeline first; the finished scene replaces the current one as an undoable step.
  */
-export async function generate(req: { prompt: string; duration: number; aspect: Aspect }, fromWelcome: boolean) {
+export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean }, fromWelcome: boolean) {
   const s = useStudio.getState();
   if (s.generation?.status === "running") return;
   const [width, height] = SIZE[req.aspect];
@@ -108,17 +108,23 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
     st.commit("AI scene", d.spec);
     // people who prefer reduced motion aren't shown a scene that starts moving by itself
     st.set({ aiMarks: marksFor(d.spec), t: 0, playing: !st.display.still, hidden: {}, locked: {}, selected: null, selection: null });
-    update({ status: "done", message: "Done" });
+    // with cinematic shots the job goes on; the editable scene is saved now, so a failed shot can't cost it
+    update(req.cinematic ? { message: "Editable scene ready; making the cinematic video…" } : { status: "done", message: "Done" });
     saveProject("AI scene").catch(() => {}); // autosave retries
     const review = Object.entries(d.spec.assets ?? {}).filter(([, a]) => a.review).map(([id, a]) => `${id}: ${a.review}`);
     say({ role: "assistant", tone: "success", text: `Built ${d.spec.layers.length} layers${d.repairs ? ` (fixed after ${d.repairs} repair${d.repairs > 1 ? "s" : ""})` : ""}. Playing it now — undo (Ctrl+Z) to go back.${review.length ? " Please check the flagged parts:" : ""}`, details: review.length ? review : undefined });
   });
+  onShotEvents(on);
   on<{ message: string; fix?: string; errors?: string[] }>("error", (d) => {
     if (useStudio.getState().generation?.status === "cancelled") return;
     update({ status: "error", message: d.message });
     say({ role: "assistant", tone: "error", text: d.fix ? `${d.message}. ${d.fix}` : d.message, details: d.errors?.slice(0, 8) });
   });
-  on("end", () => es.close());
+  on("end", () => {
+    es.close();
+    // a job that went on to cinematic shots ends here, not at "done"
+    if (useStudio.getState().generation?.status === "running" && useStudio.getState().spec?.layers.length) update({ status: "done", message: "Done" });
+  });
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED) return;
     es.close();
@@ -165,6 +171,70 @@ export async function editWithAI(instruction: string) {
   } finally {
     if (editing === ac) editing = null;
   }
+}
+
+type On = <T>(type: string, fn: (d: T) => void) => void;
+type ShotEvent = { id: string; start: number; end: number; source: string; status: "running" | "done" | "review" | "failed"; attempt?: number; shot?: CinematicShot; message?: string };
+
+/** Cinematic shot progress, the quality report and warnings, shared by generating and by redoing shots. */
+function onShotEvents(on: On) {
+  // every finished shot is stored with the scene (beside it, not as layers); failed ones too, so they can be redone alone
+  on<ShotEvent>("shot", (d) => {
+    const list = useStudio.getState().generation?.assets ?? [];
+    const label = `Cinematic shot ${d.id} (${d.start}–${d.end} s)${d.attempt && d.attempt > 1 ? `, try ${d.attempt}` : ""}`;
+    const a: AssetStatus = { id: `shot:${d.id}`, label, status: d.status, message: d.message };
+    update({ assets: list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a] });
+    const st = useStudio.getState();
+    if (!d.shot || !st.spec) return;
+    st.commit("AI cinematic shot", { ...st.spec, cinematic: [...(st.spec.cinematic ?? []).filter((c) => c.id !== d.id), d.shot] });
+    saveProject("AI cinematic shot").catch(() => {});
+    const cost = d.shot.costUsd !== undefined ? `, about $${d.shot.costUsd.toFixed(2)}` : "";
+    const tries = d.shot.attempts > 1 ? ` after ${d.shot.attempts} tries` : "";
+    if (d.status === "done") say({ role: "assistant", tone: "success", text: `Cinematic shot “${d.id}” is ready${tries} (${d.start}–${d.end} s, ${d.source}${cost}). It is saved with the project beside the editable scene.` });
+    else if (d.status === "review") say({ role: "assistant", text: `Cinematic shot “${d.id}” was made${tries} but needs your review: ${d.message}. AI › Redo cinematic shots tries again.` });
+    else say({ role: "assistant", tone: "error", text: `Cinematic shot “${d.id}” failed${tries}: ${d.message}. The editable scene is unaffected; AI › Redo cinematic shots tries again.` });
+  });
+  on<{ items: { target: string; name: string; status: "pass" | "review" | "fail"; note?: string }[] }>("quality", (d) => {
+    const open = d.items.filter((i) => i.status !== "pass");
+    if (open.length) say({ role: "assistant", text: `Quality check: ${open.length} thing${open.length > 1 ? "s" : ""} to look at`, details: open.map((i) => `${i.status === "fail" ? "✗" : "?"} ${i.target}: ${i.note ?? i.name}`) });
+  });
+  on<{ message: string; fix?: string }>("warning", (d) => say({ role: "assistant", text: d.fix ? `${d.message}. ${d.fix}` : d.message }));
+}
+
+/** Redoes only the cinematic shots that failed or need review, from their saved prompts; the editable scene is untouched. */
+export async function redoShots() {
+  const s = useStudio.getState();
+  const spec = s.spec;
+  if (!spec?.cinematic?.some((c) => c.status !== "ready") || s.generation?.status === "running") return;
+  s.set({ generation: { jobId: null, status: "running", phase: "cinematic", tokens: 0, message: "Redoing cinematic shots…", attempt: 0 } });
+  say({ role: "user", text: "Redo the cinematic shots that failed or need review" });
+  let jobId: string;
+  try {
+    const res = await fetch("/api/shots/retry", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec }) });
+    const body = (await res.json()) as { jobId?: string; error?: string; fix?: string };
+    if (!res.ok || !body.jobId) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
+    jobId = body.jobId;
+  } catch (e) {
+    const msg = e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message;
+    update({ status: "error", message: msg });
+    say({ role: "assistant", tone: "error", text: msg });
+    return;
+  }
+  update({ jobId });
+  source?.close();
+  const es = (source = new EventSource(`/api/jobs/${jobId}/events`));
+  const on: On = (type, fn) => es.addEventListener(type, (ev) => fn(JSON.parse((ev as MessageEvent).data)));
+  on<{ message: string }>("status", (d) => update({ message: d.message }));
+  onShotEvents(on);
+  on<{ message: string; fix?: string }>("error", (d) => {
+    if (useStudio.getState().generation?.status === "cancelled") return;
+    update({ status: "error", message: d.message });
+    say({ role: "assistant", tone: "error", text: d.fix ? `${d.message}. ${d.fix}` : d.message });
+  });
+  on("end", () => {
+    es.close();
+    if (useStudio.getState().generation?.status === "running") update({ status: "done", message: "Done" });
+  });
 }
 
 export async function cancelGeneration() {

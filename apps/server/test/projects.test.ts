@@ -54,6 +54,11 @@ it("creates, saves versions, edits with AI, undoes, and survives a restart", asy
   await call("POST", `/api/projects/${id}/undo`);
   expect((await call("POST", `/api/projects/${id}/undo`)).status).toBe(409);
   expect((await call("GET", "/api/projects/nope")).status).toBe(404);
+
+  expect((await app.inject({ method: "DELETE", url: `/api/projects/${id}` })).statusCode).toBe(204);
+  expect((await call("GET", `/api/projects/${id}`)).status).toBe(404);
+  expect((await call("GET", "/api/projects")).body).toEqual([]);
+  expect((await call("DELETE", `/api/projects/${id}`)).status).toBe(404);
   await app.close();
 });
 

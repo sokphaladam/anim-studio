@@ -13,6 +13,12 @@ async function api<T>(method: string, url: string, body?: unknown, signal?: Abor
 
 export const listProjects = () => api<ProjectSummary[]>("GET", "/api/projects");
 
+export async function deleteProject(id: string) {
+  await api("DELETE", `/api/projects/${id}`);
+  // a scene still open from it saves as a new project next time instead of failing
+  if (useStudio.getState().projectId === id) useStudio.getState().set({ projectId: null });
+}
+
 export async function openProject(id: string) {
   const p = await api<{ spec: SceneSpec; chat: ChatMessage[] }>("GET", `/api/projects/${id}`);
   const s = useStudio.getState();

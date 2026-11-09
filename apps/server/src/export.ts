@@ -48,6 +48,15 @@ export async function loadImages(spec: SceneSpec, imagesDir: string) {
   }
 }
 
+/** One frame of `spec` at time `t`, at the scene's own size, as PNG (the first frame of a cinematic shot). */
+export async function renderPng(spec: SceneSpec, t: number, imagesDir: string) {
+  loadFonts();
+  await loadImages(spec, imagesDir);
+  const canvas = createCanvas(spec.meta.width, spec.meta.height);
+  createRenderer(canvas, spec, { createCanvas: (w, h) => createCanvas(w, h) }).render(t, { quality: "final", fit: "contain" });
+  return new Uint8Array(canvas.toBuffer("image/png"));
+}
+
 /**
  * Renders `spec` at the preset's size and fps into `file`: a scene of another shape is letterboxed (contain) or fills
  * the frame around the camera's focus (cover); it is never stretched.

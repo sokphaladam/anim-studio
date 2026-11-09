@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST, AssetSchema as AS, ActionSchema as AC, AssetCheckSchema as ACK, CleanupSchema as CL, CharacterProfileSchema as CP, MeshSchema as MS, IKSchema as IKS, SwitchSchema as SW, KeyEaseSchema as KE, LookSchema as LK } from "./schema";
+import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST, AssetSchema as AS, ActionSchema as AC, AssetCheckSchema as ACK, CleanupSchema as CL, CharacterProfileSchema as CP, MeshSchema as MS, IKSchema as IKS, SwitchSchema as SW, KeyEaseSchema as KE, LookSchema as LK, CinematicShotSchema as CS } from "./schema";
 
 /** A validated scene with defaults applied. */
 export type SceneSpec = z.output<typeof S>;
@@ -13,6 +13,7 @@ export type Ease = z.output<typeof E>;
 export type DrawingFrame = z.output<typeof DF>;
 export type Stroke = z.output<typeof ST>;
 export type Asset = z.output<typeof AS>;
+export type CinematicShot = z.output<typeof CS>;
 export type Action = z.output<typeof AC>;
 export type AssetCheck = z.output<typeof ACK>;
 export type Cleanup = z.output<typeof CL>;

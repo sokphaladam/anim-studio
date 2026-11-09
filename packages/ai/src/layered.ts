@@ -52,6 +52,8 @@ export const LayeredPlanSchema = z.object({
     )
     .max(6)
     .default([]),
+  /** Moments worth a cinematic AI video clip (made only when asked for). Everything else stays rigged 2D animation. */
+  shots: z.array(z.object({ id: Slug, start: z.number().min(0), end: z.number().positive(), motion: z.string().min(3) })).max(2).default([]),
 });
 export type LayeredPlan = z.output<typeof LayeredPlanSchema>;
 const planJsonSchema = z.toJSONSchema(LayeredPlanSchema, { io: "input" });
@@ -76,7 +78,23 @@ export function planProblems(p: LayeredPlan, duration: number): string[] {
       if (a.start > duration) out.push(`actions[${i}].start: ${a.start}s is past the ${duration}s duration`);
     } else if (a.end <= a.start || a.end > duration) out.push(`actions[${i}]: start ${a.start}s and end ${a.end}s must satisfy 0 <= start < end <= ${duration}`);
   });
+  const shotIds = p.shots.map((s) => s.id);
+  p.shots.forEach((s, i) => {
+    if (shotIds.indexOf(s.id) !== i) out.push(`shots[${i}].id: "${s.id}" is used twice`);
+    const len = s.end - s.start;
+    if (s.end > duration || len < SHOT_SECONDS[0] || len > SHOT_SECONDS[1]) out.push(`shots[${i}]: start ${s.start}s and end ${s.end}s must be ${SHOT_SECONDS[0]}-${SHOT_SECONDS[1]} seconds apart and end by ${duration}s`);
+  });
   return out;
+}
+
+/** Length range of a cinematic shot: what the cloud video models accept and a single clip holds together. */
+export const SHOT_SECONDS = [4, 10] as const;
+export type Shot = LayeredPlan["shots"][number];
+/** The plan's cinematic shots; without any, one shot from the start (as long as a clip may be) moving as the beats say. */
+export function cinematicShots(p: LayeredPlan, duration: number): Shot[] {
+  if (p.shots.length) return p.shots;
+  const motion = p.beats.map((b) => b.note ?? b.label).join(". ") || p.mood || "gentle natural motion";
+  return [{ id: "scene", start: 0, end: Math.min(duration, SHOT_SECONDS[1]), motion }];
 }
 
 /** What the host provides: the painter (with the segmentation tools), the image store, and a PNG codec. */

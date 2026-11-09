@@ -13,6 +13,7 @@ const PHASE_LABEL = {
   spec: "Writing scene",
   repair: "Repairing scene",
   edit: "Editing scene",
+  cinematic: "Making the cinematic AI video",
   plan: "Planning layers and actions",
   background: "Painting the background",
   character: "Painting the character",

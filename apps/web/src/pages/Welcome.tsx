@@ -1,32 +1,32 @@
-import { Button, NumberField, StatusPill, cx, useToast } from "@anim/ui";
-import { Clapperboard, Plus, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
+import { Button, Dialog, Dropdown, NumberField, StatusPill, Toggle, cx, useToast, type MenuAction } from "@anim/ui";
+import { Clapperboard, Ellipsis, Film, Plus, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useMemo, useState } from "react";
 import { SceneThumb } from "../components/SceneThumb";
 import { useAIStatus } from "../components/useAIStatus";
 import { generate } from "../store/ai";
 import { useStudio } from "../store";
-import { listProjects, openProject, type ProjectSummary } from "../store/projects";
+import { deleteProject, listProjects, openProject, type ProjectSummary } from "../store/projects";
 import { ASPECTS, EXAMPLES, blankScene, validSpecOrNull, type Aspect } from "../store/scenes";
 import { AUTOSAVE_KEY } from "./Editor";
 
 const ASPECT_ICON = { "16:9": RectangleHorizontal, "9:16": RectangleVertical, "1:1": Square } as const;
 
 function usePainter() {
-  const [h, setH] = useState<{ installed: boolean; video: boolean; layered: boolean } | null>(null);
+  const [h, setH] = useState<{ installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null } | null>(null);
   useEffect(() => {
     fetch("/api/health/painter")
-      .then((r) => r.json() as Promise<{ installed: boolean; video: boolean; layered: boolean }>)
+      .then((r) => r.json() as Promise<{ installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null }>)
       .then(setH, () => setH({ installed: false, video: false, layered: false }));
   }, []);
   return h;
 }
 
-function ExampleCard({ ex, meta, onOpen }: { ex: { title: string; load: () => SceneSpec }; meta?: string; onOpen?: () => void }) {
+function ExampleCard({ ex, meta, onOpen, actions }: { ex: { title: string; load: () => SceneSpec }; meta?: string; onOpen?: () => void; actions?: MenuAction[] }) {
   const open = useStudio((s) => s.open);
   const spec = useMemo(() => ex.load(), [ex]);
   const [hover, setHover] = useState(false);
-  return (
+  const card = (
     <button
       type="button"
       onClick={onOpen ?? (() => open(ex.load()))}
@@ -45,6 +45,16 @@ function ExampleCard({ ex, meta, onOpen }: { ex: { title: string; load: () => Sc
       </div>
     </button>
   );
+  if (!actions) return card;
+  // the menu sits beside the card button, not in it: buttons can't nest
+  return (
+    <div className="group/card relative">
+      {card}
+      <div className="absolute top-1.5 right-1.5 opacity-0 transition-ui group-hover/card:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100">
+        <Dropdown label={`Actions for ${ex.title}`} items={actions} trigger={<Button size={28} variant="secondary" className="px-1.5" icon={<Ellipsis size={16} strokeWidth={1.5} />} />} />
+      </div>
+    </div>
+  );
 }
 
 export function Welcome() {
@@ -56,12 +66,21 @@ export function Welcome() {
   const painter = usePainter();
   const painterReady = painter ? painter.installed && painter.layered : null;
   const canGenerate = prompt.trim().length >= 3 && painterReady !== false;
-  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect }, true);
+  const [cinematic, setCinematic] = useState(false);
+  // the video model shots would use: the configured cloud one, else the local one
+  const shotModel = painter?.cloudVideo ?? (painter?.video ? "the local video model" : null);
+  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, cinematic: cinematic && !!shotModel }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   useEffect(() => {
     listProjects().then(setProjects, () => setProjects([]));
   }, []);
+  const [doomed, setDoomed] = useState<ProjectSummary | null>(null);
+  const remove = (p: ProjectSummary) =>
+    deleteProject(p.id).then(
+      () => (setProjects((list) => list?.filter((x) => x.id !== p.id) ?? null), toast({ title: `Deleted “${p.title}”` })),
+      (e: Error) => toast({ title: "Couldn't delete the project", description: e.message, tone: "warning" }),
+    );
   const cards = useMemo(() => projects?.map((p) => ({ ...p, ex: { title: p.title, load: () => p.spec } })), [projects]);
   const autosave = useMemo(() => {
     try {
@@ -132,6 +151,14 @@ export function Welcome() {
             })}
           </div>
           <NumberField className="w-72" label="Duration" unit="s" value={duration} min={5} max={30} step={1} slider onChange={(v) => setDuration(Math.round(v))} />
+          {shotModel && (
+            <div className="flex items-center gap-2">
+              <Toggle pressed={cinematic} onPressedChange={setCinematic} label={`Also make a cinematic AI video clip from the same plan with ${shotModel}${painter?.cloudVideo ? " (paid cloud service)" : ""}`} icon={<Film size={16} strokeWidth={1.5} />}>
+                Cinematic AI video
+              </Toggle>
+              <span className="font-mono text-micro text-fg-3">{painter?.cloudVideo ? `${shotModel} · paid, after the editable scene` : "local · several minutes per shot"}</span>
+            </div>
+          )}
           <div className="flex gap-2">
             <Button variant="primary" disabled={!canGenerate} icon={<Sparkles size={16} strokeWidth={1.5} />} onClick={start}>
               Generate with AI
@@ -153,6 +180,7 @@ export function Welcome() {
                   ex={p.ex}
                   meta={new Date(p.updatedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
                   onOpen={() => openProject(p.id).catch((e: Error) => toast({ title: "Couldn't open the project", description: e.message, tone: "warning" }))}
+                  actions={[{ id: "delete", label: "Delete project…", run: () => setDoomed(p) }]}
                 />
               ))}
             </div>
@@ -160,6 +188,21 @@ export function Welcome() {
             <p className="text-sm text-fg-3">{projects ? "Projects you make are saved here automatically." : "Loading projects…"}</p>
           )}
         </section>
+
+        <Dialog
+          open={!!doomed}
+          onOpenChange={(o) => !o && setDoomed(null)}
+          title="Delete this project?"
+          description={doomed ? `“${doomed.title}” and all its saved versions will be deleted. This can't be undone.` : undefined}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setDoomed(null)}>Cancel</Button>
+              <Button variant="primary" onClick={() => (remove(doomed!), setDoomed(null))}>Delete project</Button>
+            </>
+          }
+        >
+          {null}
+        </Dialog>
 
         <section className="flex flex-col gap-3">
           <h2 className="text-title font-semibold text-fg-2">Examples</h2>

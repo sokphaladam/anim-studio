@@ -20,6 +20,8 @@ Output JSON only, no prose, with exactly these fields:
   - {"type": "look_at", "who": a character id, "target": a prop or other character id, "start": seconds, "end": seconds, "wakes": true if they wake up / open their eyes as it starts}
   - {"type": "walk", "who": a character id (usually an animal), "path": 2-6 points [x, y] its feet pass through, the first is where it rests, "start": seconds, "end": seconds}: it walks there and comes back. A walker is painted walking and keeps that pose the whole time (it can't nap first, stand up or sit down), so only give a walk to a character whose pose is walking or standing.
 
+- "shots": 0-2 moments that would look clearly better as a short cinematic video clip than as layers moving (wind through hair and clothes, a camera move, flowing water), each {"id": lowercase word, "start": seconds, "end": seconds (4-10 seconds after start), "motion": one or two plain sentences of what moves}. They are only made when the user asks for a cinematic video; [] when the layered animation is enough.
+
 Rules:
 - "box", "path" and "ambient.box" use fractions of the frame width and height (0 = left/top, 1 = right/bottom); x1 > x0 and y1 > y0. Keep boxes realistic in size: a mug is small (about 0.05 wide), a person at a window fills about a third of the height.
 - Lofi means calm: prefer idle loops and ambient effects over big actions. Most scenes need no actions at all.

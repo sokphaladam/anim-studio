@@ -80,6 +80,14 @@ export const LayerSchema = z.object({
   pivot: z.tuple([z.number(), z.number()]).optional(),
   /** Image layers only: deform the image with bones instead of moving it rigidly. */
   mesh: MeshSchema.optional(),
+  /** Which plane of the shot it belongs to (camera parallax, fog and depth of field); children inherit it. */
+  plane: z.enum(["background", "midground", "foreground"]).optional(),
+  /** Exact distance in the shot, 0 = nearest … 1 = farthest; overrides the plane's. */
+  depth: z.number().min(0).max(1).optional(),
+  /** A soft contact shadow on the ground under the layer (or, for a group, under all its parts), following it as it moves. */
+  shadow: z.object({ amount: num.default(0.5), size: z.number().positive().max(3).default(1) }).optional(),
+  /** Only draw where this other layer draws (rain only inside a window). */
+  clip: z.string().min(1).optional(),
 });
 
 /**
@@ -243,7 +251,36 @@ export const MetaSchema = z.object({
   height: z.number().int().positive(),
 });
 
-export const CameraSchema = z.object({ zoom: num.default(1), x: num.optional(), y: num.optional() });
+export const CameraSchema = z.object({
+  zoom: num.default(1),
+  x: num.optional(),
+  y: num.optional(),
+  /** A gentle cyclic move (it returns to its start, so a loop stays seamless): push in, pan across, or drift around. */
+  motion: z.object({ kind: z.enum(["push", "pan", "drift"]), amount: z.number().min(0).max(1).default(0.3), period: z.number().positive().optional() }).optional(),
+  /** How much nearer planes move more than far ones as the camera moves (0 = flat, 1 = strong). */
+  parallax: z.number().min(0).max(1).default(0),
+  /** The point a render of another shape (a vertical cut of a wide scene) is centred on. */
+  focus: z.tuple([z.number(), z.number()]).optional(),
+});
+
+/**
+ * The finishing look of the whole frame, applied the same way in preview and export. Every value can be a "@track".
+ * exposure in stops; contrast, saturation and temperature −1…1 (0 = unchanged); the rest 0…1.
+ */
+export const LookSchema = z.object({
+  exposure: num.default(0),
+  contrast: num.default(0),
+  saturation: num.default(0),
+  temperature: num.default(0),
+  vignette: num.default(0),
+  bloom: z.object({ amount: num.default(0.3), threshold: num.default(0.75) }).optional(),
+  /** Haze that grows with depth: far planes take on its color. */
+  fog: z.object({ amount: num.default(0.3), color: hex.default("#9fb0c8"), near: z.number().min(0).max(1).default(0.3) }).optional(),
+  /** Depth of field: planes away from `focus` (a depth, 0–1) blur. */
+  dof: z.object({ amount: num.default(0.4), focus: num.default(0.5) }).optional(),
+  /** The scene's light: its color tints subject and environment alike (so separately painted parts sit in the same light), and shadows fall away from `direction` (degrees, 0 = from the right, 90 = from below, 270 = from above). */
+  light: z.object({ color: hex.default("#ffe2b8"), amount: num.default(0.2), direction: z.number().default(250) }).optional(),
+});
 
 /** Every "$name" / "@name" string inside a value, with its JSON path. */
 export function collectRefs(value: unknown, path: (string | number)[] = [], out: { ref: string; path: (string | number)[] }[] = []) {
@@ -269,6 +306,7 @@ export const SceneSpecSchema = z
     characters: z.record(z.string(), CharacterProfileSchema).optional(),
     ik: z.array(IKSchema).optional(),
     switches: z.array(SwitchSchema).optional(),
+    look: LookSchema.optional(),
   })
   .superRefine((s, ctx) => {
     const dur = s.meta.duration;
@@ -304,6 +342,7 @@ export const SceneSpecSchema = z
       return false;
     };
     s.layers.forEach((l, i) => {
+      if (l.clip !== undefined && (!byId.has(l.clip) || l.clip === l.id)) ctx.addIssue({ code: "custom", path: ["layers", i, "clip"], message: l.clip === l.id ? "A layer can't clip to itself" : `Unknown clip layer "${l.clip}"` });
       if (l.type === "bone" && !l.pivot) ctx.addIssue({ code: "custom", path: ["layers", i, "pivot"], message: `Bone "${l.id}" needs a pivot: its joint` });
       if (!l.mesh) return;
       const at = (k: (string | number)[], message: string) => ctx.addIssue({ code: "custom", path: ["layers", i, "mesh", ...k], message });

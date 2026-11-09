@@ -11,6 +11,7 @@ import { PartCheckDocker } from "../dockers/PartCheck";
 import { RigDocker } from "../dockers/Rig";
 import { FaceDocker } from "../dockers/Face";
 import { MotionDocker } from "../dockers/Motion";
+import { LookDocker } from "../dockers/Look";
 import { LayersDocker } from "../dockers/Layers";
 import { Timeline } from "../dockers/Timeline";
 import { useStudio } from "../store";
@@ -108,6 +109,7 @@ export function Editor() {
       rig: () => <div className="h-full overflow-auto bg-panel"><RigDocker /></div>,
       face: () => <div className="h-full overflow-auto bg-panel"><FaceDocker /></div>,
       motion: () => <div className="h-full overflow-auto bg-panel"><MotionDocker /></div>,
+      look: () => <div className="h-full overflow-auto bg-panel"><LookDocker /></div>,
       ai: () => <div className="h-full bg-panel"><AIAssistantDocker ref={aiInput} /></div>,
     }),
     [extra],

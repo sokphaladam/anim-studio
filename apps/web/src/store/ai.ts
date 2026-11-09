@@ -106,7 +106,8 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
   on<{ spec: SceneSpec; repairs: number }>("done", (d) => {
     const st = useStudio.getState();
     st.commit("AI scene", d.spec);
-    st.set({ aiMarks: marksFor(d.spec), t: 0, playing: true, hidden: {}, locked: {}, selected: null, selection: null });
+    // people who prefer reduced motion aren't shown a scene that starts moving by itself
+    st.set({ aiMarks: marksFor(d.spec), t: 0, playing: !st.display.still, hidden: {}, locked: {}, selected: null, selection: null });
     update({ status: "done", message: "Done" });
     saveProject("AI scene").catch(() => {}); // autosave retries
     const review = Object.entries(d.spec.assets ?? {}).filter(([, a]) => a.review).map(([id, a]) => `${id}: ${a.review}`);

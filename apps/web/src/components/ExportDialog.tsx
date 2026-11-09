@@ -16,6 +16,8 @@ type State = { phase: "idle" } | { phase: "running"; jobId?: string; frame: numb
 /** Picks a preset, renders the current scene to MP4 on the server with frame progress, then offers the file. */
 export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [preset, setPreset] = useState<Preset>("youtube");
+  const [quality, setQuality] = useState<"final" | "balanced" | "draft">("final");
+  const [fit, setFit] = useState<"cover" | "contain">("cover");
   const [st, setSt] = useState<State>({ phase: "idle" });
   const es = useRef<EventSource | null>(null);
   const meta = useStudio((s) => s.spec?.meta);
@@ -31,7 +33,7 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (!spec) return;
     setSt({ phase: "running", frame: 0, total: 0 });
     try {
-      const res = await fetch("/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset }) });
+      const res = await fetch("/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset, quality, fit }) });
       const body = (await res.json()) as { jobId?: string; error?: string };
       if (!res.ok || !body.jobId) return setSt({ phase: "error", message: body.error ?? `Export failed (${res.status})` });
       const jobId = body.jobId;
@@ -120,8 +122,27 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           }))}
         />
         <p className="text-sm text-fg-2">
-          {frames} frames{meta ? ` (${meta.duration} s)` : ""}.{letterbox ? " The scene is a different shape from this preset, so it gets black bars instead of being stretched." : ""}
+          {frames} frames{meta ? ` (${meta.duration} s)` : ""}.
         </p>
+        {letterbox && (
+          <div role="radiogroup" aria-label="Another shape" className="flex flex-col gap-1 text-sm text-fg-2">
+            <span>The scene is a different shape from this preset. It is never stretched:</span>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="fit" checked={fit === "cover"} onChange={() => setFit("cover")} /> Fill the frame, centred on the camera's focus (the edges are cut)
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="fit" checked={fit === "contain"} onChange={() => setFit("contain")} /> Show it all, with black bars
+            </label>
+          </div>
+        )}
+        <label className="flex items-center gap-2 text-sm text-fg-2">
+          Quality
+          <select aria-label="Quality" value={quality} onChange={(e) => setQuality(e.target.value as typeof quality)} className="rounded-sm border border-line bg-raised p-1 text-sm text-fg">
+            <option value="final">Final (smoothest blur and glow)</option>
+            <option value="balanced">Balanced</option>
+            <option value="draft">Draft (no blur or glow; fastest)</option>
+          </select>
+        </label>
       </fieldset>
 
       {st.phase === "running" && (

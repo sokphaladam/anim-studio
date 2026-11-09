@@ -117,3 +117,19 @@ it("rejects bad input, and a cancelled export leaves no file behind", async () =
   expect(readdirSync(join(dir, "exports")).filter((f) => f.includes("youtube"))).toEqual([]);
   expect(existsSync(join(dir, "exports"))).toBe(true);
 });
+
+it("exports with the look the preview shows: same fog, depth of field, light and grade in the MP4", { timeout: 120_000 }, async () => {
+  const s = spec as { look?: unknown; meta: { duration: number } };
+  const looked = { ...s, look: { exposure: 0.2, contrast: 0.1, vignette: 0.3, fog: { amount: 0.4, color: "#a0b0d0", near: 0.3 }, dof: { amount: 0.6, focus: 0.5 }, light: { color: "#ffd9a0", amount: 0.3 }, bloom: { amount: 0.3, threshold: 0.7 } } };
+  const ev = await run({ spec: looked, preset: "draft", quality: "balanced", fit: "cover" });
+  const done = ev.find((e) => e.type === "done")?.data as { url: string } | undefined;
+  if (!done) throw new Error(JSON.stringify(ev.slice(-3)));
+  const file = join(process.env.EXPORTS_DIR!, done.url.split("/").pop()!);
+  const v = validateScene(looked);
+  if (!v.ok) throw new Error(v.errors.join());
+  for (const src of imageSources(v.spec)) registerImage(src, await loadImage(readFileSync(join(process.env.IMAGES_DIR!, src.split("/").pop()!))));
+  const c = createCanvas(960, 540);
+  createRenderer(c, v.spec, { createCanvas: (w, h) => createCanvas(w, h) }).render(0, { quality: "balanced", fit: "cover" });
+  expect(diff(frameOf(file, 0, 960, 540), new Uint8Array(c.data()))).toBeLessThan(4);
+  expect((await post("/api/export", { spec: looked, preset: "draft", quality: "ultra" })).status).toBe(400);
+});

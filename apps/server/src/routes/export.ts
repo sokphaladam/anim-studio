@@ -7,7 +7,7 @@ import { z } from "zod";
 import { exportMp4, PRESETS, type Preset } from "../export";
 import { startJob } from "../jobs";
 
-const Body = z.object({ spec: z.unknown(), preset: z.enum(Object.keys(PRESETS) as [Preset, ...Preset[]]) });
+const Body = z.object({ spec: z.unknown(), preset: z.enum(Object.keys(PRESETS) as [Preset, ...Preset[]]), quality: z.enum(["draft", "balanced", "final"]).default("final"), fit: z.enum(["contain", "cover"]).default("contain") });
 const FILE = /^[a-z0-9-]{1,80}\.mp4$/;
 
 /** POST /api/export renders the spec it is sent (what the editor shows, saved or not) as a job; follow /api/jobs/:id/events. */
@@ -27,7 +27,7 @@ export function exportRoutes(app: FastifyInstance, imagesDir: string, exportsDir
       const out = await exportMp4(spec, b.data.preset, imagesDir, join(exportsDir, name), (frame, total) => {
         // about 100 updates per export, however long it is
         if (frame === total || frame - shown >= total / 100) emit({ type: "progress", frame: (shown = frame), total });
-      }, signal);
+      }, signal, { quality: b.data.quality, fit: b.data.fit });
       emit({ type: "done", url: `/api/exports/${name}`, name, ...out });
     });
     return { jobId };

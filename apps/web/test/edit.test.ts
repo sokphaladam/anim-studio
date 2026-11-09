@@ -2,7 +2,7 @@ import { apply, layerMatrix, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addGaze, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { addGaze, setCamera, setLook, setShot, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
 import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
@@ -368,5 +368,44 @@ describe("motion edits (M11)", () => {
   it("lists the tracks moving a layer, and blends a clip", () => {
     expect(tracksOf(base(), "head")).toEqual([{ name: "head-rotation", label: "rotation" }, { name: "look-rotation", label: "c · rotation" }]);
     expect(setClipWeight(base(), "c", 0.5).actions![0].weight).toBe(0.5);
+  });
+});
+
+describe("look and shot edits (M12)", () => {
+  const base = () =>
+    ({
+      version: 1,
+      meta: { title: "t", duration: 4, fps: 24, width: 400, height: 400 },
+      palette: {},
+      tracks: {},
+      overlays: [],
+      beats: [],
+      layers: [
+        { id: "wall", type: "image", params: { asset: "a", x: 0, y: 0, w: 400, h: 400 } },
+        { id: "rain", type: "rain", params: {} },
+      ],
+      assets: { a: { src: "/a.png", width: 10, height: 10, kind: "image" } },
+    }) as unknown as SceneSpec;
+
+  it("sets look values and adds, edits and removes whole effects", () => {
+    let s = setLook(base(), { exposure: 0.5, fog: { amount: 0.4, color: "#a0b0d0", near: 0.2 } });
+    expect(s.look).toMatchObject({ exposure: 0.5, contrast: 0, fog: { amount: 0.4 } });
+    s = setLook(s, { fog: { amount: 0.8, color: "#a0b0d0", near: 0.2 } });
+    expect(s.look!.fog!.amount).toBe(0.8);
+    valid(s);
+    expect(setLook(s, { fog: null }).look!.fog).toBeUndefined();
+  });
+
+  it("sets the camera move, parallax and focus; a layer's plane, shadow and clip", () => {
+    const c = setCamera(base(), { motion: { kind: "push", amount: 0.5 }, parallax: 0.4, focus: [100, 200] });
+    expect(c.camera).toMatchObject({ zoom: 1, parallax: 0.4, focus: [100, 200], motion: { kind: "push", amount: 0.5 } });
+    expect(setCamera(c, { motion: null }).camera!.motion).toBeUndefined();
+    valid(c);
+    let s = setShot(base(), "wall", { plane: "background", shadow: { amount: 0.5, size: 1 } });
+    s = setShot(s, "rain", { clip: "wall" });
+    expect(s.layers[0]).toMatchObject({ plane: "background", shadow: { amount: 0.5 } });
+    expect(s.layers[1].clip).toBe("wall");
+    valid(s);
+    expect("plane" in setShot(s, "wall", { plane: null }).layers[0]).toBe(false);
   });
 });

@@ -426,7 +426,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       identity = { name: "identity", status: "pass", note: `Saved as the ${label(c.id)} profile` };
     }
 
-    cast.push({ id: c.id, type: "group", params: {}, pivot: feet });
+    // a soft shadow under the feet keeps the character standing on the ground as it moves
+    cast.push({ id: c.id, type: "group", params: {}, pivot: feet, shadow: { amount: 0.45, size: 1 } });
     // breathing grows the body from where it rests
     cast.push(place(`${c.id}_body`, bodyR, body, s, at, { parent: c.id, pivot: feet, from: `${c.id}_body_fill`, mask: `${c.id}_body_mask`, checks: [reconstruction, identity] }));
     for (const p of pieces) {
@@ -495,7 +496,10 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
 
   // timed actions → keyframes
   stage("animate", "Turning the motions into keyframes");
-  const layers = [...back, ...sky, ...behind, ...cast, ...front, ...fx];
+  // planes of the shot (camera parallax, fog and depth of field): the setting and sky far, the props behind and the
+  // characters in the middle, what is in front of them near; rig parts inherit their character's plane
+  const plane = (list: Layer[], p: NonNullable<Layer["plane"]>) => list.map((l) => (l.parent === undefined ? { ...l, plane: p } : l));
+  const layers = [...plane(back, "background"), ...plane(sky, "background"), ...plane(behind, "midground"), ...plane(cast, "midground"), ...plane(front, "foreground"), ...plane(fx, "foreground")];
   for (const a of plan.actions) {
     if (a.type === "expression") continue; // keyed on the face switches below
     if (a.type === "walk") {
@@ -513,7 +517,10 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     if (layers.some((l) => l.id === `${a.who}_irises`))
       actions.push({ id: `${a.who}_gazes_at_${a.target}`, type: "gaze", part: `${a.who}_irises`, target, start: a.start, end: Math.min(a.end, a.start + 0.3), ease: "out", amount: 1 });
   }
-  let scene = { version: 1, meta, palette: {}, tracks, layers, overlays: [], beats: plan.beats, assets, actions, ...(Object.keys(characters).length ? { characters } : {}), ...(switches.length ? { switches } : {}) } as SceneSpec;
+  // a render of another shape (a vertical cut of a wide scene) stays centred on the first character
+  const lead = plan.characters[0] && layers.find((l) => l.id === plan.characters[0].id);
+  const camera = lead?.pivot ? { camera: { zoom: 1, parallax: 0, focus: [lead.pivot[0], r2(lead.pivot[1] - ((plan.characters[0].box[3] - plan.characters[0].box[1]) * H) / 2)] as [number, number] } } : {};
+  let scene = { version: 1, meta, palette: {}, tracks, layers, overlays: [], beats: plan.beats, assets, actions, ...camera, ...(Object.keys(characters).length ? { characters } : {}), ...(switches.length ? { switches } : {}) } as SceneSpec;
   for (const a of plan.actions) if (a.type === "expression") scene = applyExpression(scene, a.who, a.expression as Expression, a.start).spec;
   const draft = validateScene(scene);
   if (!draft.ok) throw new Error(`Layered scene failed validation: ${draft.errors.join("; ")}`);

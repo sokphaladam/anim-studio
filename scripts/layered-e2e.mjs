@@ -264,6 +264,45 @@ try {
   await page.screenshot({ path: `${out}/layered-motion.png` });
   await page.locator(".dv-tab", { hasText: "Layers" }).click();
 
+  // Look docker: fog, depth of field and a camera push; switching an effect off in the preview and back; guides
+  const lookOn = async (id) => {
+    await page.locator(".dv-tab", { hasText: "Layers" }).click();
+    await row(id).click();
+    await page.locator(".dv-tab", { hasText: /^Look$/ }).click();
+  };
+  await page.evaluate(() => window.studio.getState().set({ t: 2, playing: false }));
+  await lookOn("girl");
+  const plainLook = await frame(2);
+  const lookPanel = page.getByRole("region", { name: "Grade and effects" });
+  await lookPanel.getByRole("button", { name: "Fog", exact: true }).click();
+  await lookPanel.getByRole("button", { name: "Depth of field", exact: true }).click();
+  await page.getByRole("combobox", { name: "Camera move" }).selectOption("push");
+  const looked = await state(() => window.studio.getState().spec);
+  check(!!looked.look?.fog && !!looked.look?.dof && looked.camera?.motion?.kind === "push", "fog, depth of field and a camera push are set");
+  check(looked.layers.find((l) => l.id === "balcony_background").plane === "background" && looked.layers.find((l) => l.id === "girl").plane === "midground", "generated layers sit in background and midground planes");
+  const withLook = await frame(2);
+  check(withLook !== plainLook, "the look changes the preview");
+  await lookPanel.getByRole("button", { name: "Fog", exact: true }).click(); // off: removes it from the scene
+  await lookPanel.getByRole("button", { name: "Fog", exact: true }).click(); // and back
+  const effectsGroup = page.getByRole("region", { name: "Preview" });
+  await effectsGroup.getByRole("button", { name: "Depth of field" }).click(); // preview only
+  check((await state(() => window.studio.getState().display.off)).includes("dof") && !!(await state(() => window.studio.getState().spec.look?.dof)), "switching depth of field off in the preview keeps it in the scene");
+  await effectsGroup.getByRole("button", { name: "Depth of field" }).click();
+  check((await frame(2)) === withLook, "switching it back shows the same frame again");
+  const overlayInk = () => page.evaluate(() => {
+    const o = [...document.querySelectorAll("canvas")].find((c) => c.getAttribute("aria-hidden") === "true");
+    const d = o.getContext("2d").getImageData(0, 0, o.width, o.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+    return n;
+  });
+  const inkBefore = await overlayInk();
+  await effectsGroup.getByRole("button", { name: "Guides" }).click();
+  check((await overlayInk()) > inkBefore, "the safe-area guides are drawn on the canvas");
+  await page.screenshot({ path: `${out}/layered-look.png` });
+  await effectsGroup.getByRole("button", { name: "Guides" }).click();
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+
   // save, reopen: assets, rig and keyframes intact
   const saved = await state(async () => {
     const { saveProject } = await import("/src/store/projects.ts");
@@ -278,7 +317,7 @@ try {
   check(sorted(reopened.assets) === sorted(saved.assets), "assets survive save and reopen");
   // key order isn't meaningful (the server returns schema order), so compare with sorted keys
   const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
-  check(canon([reopened.layers, reopened.tracks, reopened.actions, reopened.ik, reopened.switches]) === canon([saved.layers, saved.tracks, saved.actions, saved.ik, saved.switches]), "rig (bones, mesh, IK), switches, keyframes and actions survive save and reopen");
+  check(canon([reopened.layers, reopened.tracks, reopened.actions, reopened.ik, reopened.switches, reopened.look, reopened.camera]) === canon([saved.layers, saved.tracks, saved.actions, saved.ik, saved.switches, saved.look, saved.camera]), "rig (bones, mesh, IK), switches, keyframes and actions survive save and reopen");
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/layered-reopened.png` });
 

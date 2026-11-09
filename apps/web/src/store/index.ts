@@ -1,3 +1,4 @@
+import type { Effect, Quality } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import type { Generation, ChatMessage } from "./ai";
 import { create } from "zustand";
@@ -35,6 +36,12 @@ export interface StudioState {
   autoFrame: boolean;
   autoKey: boolean;
   onion: { on: boolean; before: number; after: number; opacity: number };
+  /**
+   * How the editor previews (never what is exported): render quality (draft while playing keeps it smooth), effects
+   * switched off for troubleshooting, safe-area guides, and still mode (no camera motion, no autoplay) for people who
+   * prefer reduced motion.
+   */
+  display: { quality: Quality; off: Effect[]; guides: boolean; still: boolean };
   selection: Selection;
   hidden: Record<string, boolean>;
   locked: Record<string, boolean>;
@@ -93,6 +100,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   autoFrame: true,
   autoKey: true,
   onion: { on: false, before: 2, after: 1, opacity: 0.35 },
+  display: { quality: "balanced" as Quality, off: [] as Effect[], guides: false, still: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches },
   selection: null,
   hidden: {},
   locked: {},

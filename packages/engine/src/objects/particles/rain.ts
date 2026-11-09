@@ -20,7 +20,7 @@ export const rain = defineObject({
     color: color.default("#b8c8ff"),
     seed: z.number().int().default(11),
   }),
-  draw(ctx, p, t) {
+  draw(ctx, p, t, env) {
     const w = p.x1 - p.x0, h = p.y1 - p.y0;
     if (w <= 0 || h <= 0 || p.intensity <= 0) return;
     const all = drops(p.seed, 400);
@@ -30,8 +30,10 @@ export const rain = defineObject({
     ctx.lineCap = "round";
     for (let i = 0; i < n; i++) {
       const d = all[i];
-      // shortcut: drops jump a little when the scene loops; invisible at rain speed, make speeds loop-exact if it shows
-      const y = p.y0 - 40 + mod(d.y * (h + 80) + 900 * d.speed * (0.6 + 0.4 * d.depth) * t, h + 80);
+      // each drop falls a whole number of times per scene, so the rain is exactly where it started when the video loops
+      const D = env.spec.meta.duration, fall = h + 80;
+      const falls = Math.max(1, Math.round((900 * d.speed * (0.6 + 0.4 * d.depth) * D) / fall));
+      const y = p.y0 - 40 + mod(d.y * fall + (falls * fall * t) / D, fall);
       const x = p.x0 + mod(d.x * w + p.slant * (y - p.y0), w);
       const len = (10 + 16 * d.depth) * d.len;
       ctx.strokeStyle = withAlpha(p.color, 0.18 + 0.32 * d.depth);

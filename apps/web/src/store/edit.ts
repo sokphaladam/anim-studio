@@ -396,3 +396,36 @@ export function tracksOf(spec: SceneSpec, id: string): { name: string; label: st
   const acts = (spec.actions ?? []).filter((a) => a.part === id).flatMap((a) => Object.entries(a.tracks ?? {}).filter(([, n]) => n in spec.tracks).map(([ch, n]) => ({ name: n, label: `${a.clip ?? a.id} · ${ch}` })));
   return [...own, ...acts];
 }
+
+type LookIn = NonNullable<SceneSpec["look"]>;
+/** Changes the scene's look: a value, or a whole effect (bloom, fog, dof, light) set or (with null) removed. */
+export function setLook(spec: SceneSpec, patch: { [K in keyof LookIn]?: LookIn[K] | null }): SceneSpec {
+  const look: Record<string, unknown> = { exposure: 0, contrast: 0, saturation: 0, temperature: 0, vignette: 0, ...spec.look };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete look[k];
+    else look[k] = v && typeof v === "object" && !Array.isArray(v) && typeof look[k] === "object" ? { ...(look[k] as object), ...v } : v;
+  }
+  return { ...spec, look: look as LookIn };
+}
+
+type CameraIn = NonNullable<SceneSpec["camera"]>;
+/** Changes the camera (motion null removes the move). */
+export function setCamera(spec: SceneSpec, patch: { [K in keyof CameraIn]?: CameraIn[K] | null }): SceneSpec {
+  const camera: Record<string, unknown> = { zoom: 1, parallax: 0, ...spec.camera };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete camera[k];
+    else camera[k] = k === "motion" && v && camera.motion ? { ...(camera.motion as object), ...(v as object) } : v;
+  }
+  return { ...spec, camera: camera as CameraIn };
+}
+
+/** Changes a layer's place in the shot: plane, depth, shadow, clip (null removes). */
+export const setShot = (spec: SceneSpec, id: string, patch: { plane?: Layer["plane"] | null; depth?: number | null; shadow?: Layer["shadow"] | null; clip?: string | null }): SceneSpec =>
+  mapLayer(spec, id, (l) => {
+    const next: Record<string, unknown> = { ...l };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) delete next[k];
+      else next[k] = v;
+    }
+    return next as Layer;
+  });

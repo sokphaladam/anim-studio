@@ -37,6 +37,7 @@ import "./rig/image";
 // library growth (Milestone 7)
 import "./backgrounds/clouds";
 import "./particles/snow";
+import "./particles/cinematic";
 import "./particles/fireflies";
 import "./props/wall-clock";
 import "./props/bookshelf";

@@ -1,5 +1,5 @@
 // MP4 export: renders every frame with the same engine as the editor preview, headless, and pipes the pixels into ffmpeg.
-import { createRenderer, imageSources, registerImage } from "@anim/engine";
+import { createRenderer, imageSources, registerImage, type Quality } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import { createCanvas, GlobalFonts, loadImage } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
@@ -49,10 +49,11 @@ async function loadImages(spec: SceneSpec, imagesDir: string) {
 }
 
 /**
- * Renders `spec` at the preset's size and fps (letterboxed by the renderer, never stretched) into `file`.
+ * Renders `spec` at the preset's size and fps into `file`: a scene of another shape is letterboxed (contain) or fills
+ * the frame around the camera's focus (cover); it is never stretched.
  * Writes to a temp file first, so a failed or cancelled export never leaves a broken MP4 behind.
  */
-export async function exportMp4(spec: SceneSpec, preset: Preset, imagesDir: string, file: string, onFrame: (done: number, total: number) => void, signal?: AbortSignal) {
+export async function exportMp4(spec: SceneSpec, preset: Preset, imagesDir: string, file: string, onFrame: (done: number, total: number) => void, signal?: AbortSignal, opts: { quality?: Quality; fit?: "contain" | "cover" } = {}) {
   const { width, height, fps } = PRESETS[preset];
   loadFonts();
   await loadImages(spec, imagesDir);
@@ -68,7 +69,8 @@ export async function exportMp4(spec: SceneSpec, preset: Preset, imagesDir: stri
   try {
     for (let i = 0; i < total; i++) {
       signal?.throwIfAborted();
-      r.render(i / fps);
+      // the same renderer and options as the preview; only blur and bloom sampling depend on the quality
+      r.render(i / fps, { quality: opts.quality ?? "final", fit: opts.fit ?? "contain" });
       // the bars around a letterboxed scene are transparent pixels, which encode as black
       if (!enc.stdin.write(canvas.data())) await new Promise((ok) => enc.stdin.once("drain", ok));
       onFrame(i + 1, total);

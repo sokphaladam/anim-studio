@@ -499,3 +499,17 @@ describe("faces, gaze and turns (M10)", () => {
     expect(planProblems(bad, 6).join()).toMatch(/add "surprised" to girl.expressions/);
   });
 });
+
+describe("shot planes (M12)", () => {
+  it("puts the setting far, the character in the middle with a shadow, and centres other-shape renders on her", async () => {
+    const { spec } = await run();
+    const L = (id: string) => spec.layers.find((l) => l.id === id)!;
+    expect(L("balcony_background").plane).toBe("background");
+    expect(L("girl").plane).toBe("midground");
+    expect(L("girl_head").plane).toBeUndefined(); // inherits the character's
+    expect(L("girl").shadow).toMatchObject({ amount: 0.45 });
+    const [fx, fy] = spec.camera!.focus!;
+    expect(fx).toBe(L("girl").pivot![0]);
+    expect(fy).toBeLessThan(L("girl").pivot![1]);
+  });
+});

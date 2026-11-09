@@ -234,6 +234,28 @@ Acceptance criteria:
 - Final render preserves the intended composition at 1920×1080 and 1080×1920.
 - Preview and export use the same effect parameters and produce matching sampled frames.
 
+**Status (November 9, 2026): implemented, except where noted.**
+
+- **Depth:** layers have a `plane` (background, midground, foreground) or an exact `depth` (0 near, 1 far), and rig parts inherit their character's. Generation assigns planes, gives characters a contact shadow, and sets the camera's focus on the first character.
+- **Camera:** an optional cyclic `motion` (push, pan or drift over a period fitted to the scene, so it returns to its start at the loop) and `parallax`, so near planes travel more than far ones. A camera `focus` lets a render of another shape fill the frame around the subject (`fit: "cover"`) instead of letterboxing it. The editor's Guides show action- and title-safe areas and the other shape's cut.
+- **Look** (`SceneSpec.look`, every value keyable):
+  - frame-wide: exposure, contrast, saturation, warmth, vignette, bloom, and a scene light color multiplied into subject and environment alike;
+  - per layer, by depth: fog and depth-of-field blur. Each such layer is drawn alone and treated only within its on-screen box.
+  
+  All pixel work is plain arithmetic, not canvas filters, so preview and export compute the same values. The export parity test shows a mean difference under 4 per channel after H.264.
+- **Contact shadows** (`layer.shadow`) are placed every frame from where the layer's (or group's) image parts are. They follow walking feet and fall away from the light.
+- **Clipping:** `layer.clip` limits a layer to where another layer draws (rain only on the glass).
+- **Particles:** rain is now loop-exact (whole falls per scene). New objects are `dust`, `flicker` and `window-rain`, all seeded and made of whole cycles per scene, so they don't jump at the loop.
+- **Quality:** draft, balanced and final change only blur and bloom sampling. Draft skips them, and the preview uses draft while playing. Export takes quality and fit.
+- **Look docker:**
+  - Grade, effects, camera, and the selected layer's plane, depth, shadow and clip.
+  - Preview-only controls: per-effect switches for troubleshooting, Guides, and Still. Still holds the camera and doesn't autoplay; it starts on when the system prefers reduced motion.
+- Not done:
+  - Soft drop shadows cast by the light: only ground contact shadows.
+  - Light shafts remain the existing `light-shaft` object, not tied to the light direction.
+  - Drawing layers don't get fog or depth of field.
+  - Effect cost at 1080p is not yet profiled.
+
 ### M13 — Music-aware animation input
 
 **Goal:** Accept music analysis from CR Content without duplicating song analysis or coupling the renderer to an audio service.

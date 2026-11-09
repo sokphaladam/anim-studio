@@ -5,7 +5,7 @@ import { useToast } from "@anim/ui";
 import { useEffect, useRef, useState } from "react";
 import { frameOf, useStudio, type Tool } from "../store";
 import { bbox, findLayer, heldIndexAt, newDrawingLayer, strokePoints } from "../store/edit";
-import { drawRig } from "./rigOverlay";
+import { drawGuides, drawRig } from "./rigOverlay";
 import { overlayKey } from "../store/scenes";
 import { brushTool, eraserTool, eyedropperTool, fillTool } from "../tools/paint";
 import { dashedPath, selectTool } from "../tools/select";
@@ -126,7 +126,9 @@ export function CanvasView() {
     // show exactly what export will show: time snapped to the frame grid
     const t = frameOf(s.t, s.spec) / s.spec.meta.fps;
     const onion = s.onion.on && !s.playing ? { before: s.onion.before, after: s.onion.after, opacity: s.onion.opacity, beforeColor: cssVar("--onion-before"), afterColor: cssVar("--onion-after") } : undefined;
-    renderer.current.render(t, { onion });
+    // while playing, a draft render keeps the preview smooth; still mode holds the camera
+    const off = [...s.display.off, ...(s.display.still ? (["camera"] as const) : [])];
+    renderer.current.render(t, { onion, quality: s.playing ? "draft" : s.display.quality, off });
   };
 
   const drawOverlay = () => {
@@ -148,6 +150,7 @@ export function CanvasView() {
       const b = bbox(sel.indices.flatMap((i) => (strokes[i] ? strokePoints(strokes[i]) : [])));
       if (b) dashedPath(g, ([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]] as Pt[]).map((p) => c.fromLayer(l.id, p)), c.unitsPerPx);
     }
+    if (s.display.guides) drawGuides(g, s.spec, c.unitsPerPx);
     drawRig(g, c, s.spec, s.selected, s.hidden);
     if (!drag.current) TOOLS[s.tool].overlay(g, c);
   };
@@ -165,8 +168,8 @@ export function CanvasView() {
 
   useEffect(() => {
     const unsub = useStudio.subscribe((s, p) => {
-      if (s.t !== p.t || s.onion !== p.onion || s.playing !== p.playing) renderMain();
-      if (s.t !== p.t || s.selection !== p.selection || s.tool !== p.tool || s.playing !== p.playing || s.brush !== p.brush || s.eraserSize !== p.eraserSize || s.spec !== p.spec || s.selected !== p.selected) drawOverlay();
+      if (s.t !== p.t || s.onion !== p.onion || s.playing !== p.playing || s.display !== p.display) renderMain();
+      if (s.t !== p.t || s.selection !== p.selection || s.tool !== p.tool || s.playing !== p.playing || s.brush !== p.brush || s.eraserSize !== p.eraserSize || s.spec !== p.spec || s.selected !== p.selected || s.display !== p.display) drawOverlay();
     });
     Promise.allSettled(ENGINE_FONTS.map((f) => document.fonts.load(f))).then(renderMain);
     return unsub;

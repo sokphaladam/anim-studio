@@ -57,3 +57,29 @@ export function drawRig(g: Ctx2D, c: Pick<ToolContext, "fromLayer" | "unitsPerPx
   }
   g.restore();
 }
+
+/**
+ * Editor-only framing guides: action-safe (95%) and title-safe (90%) boxes, and the part a render of the other shape
+ * keeps (a vertical cut of a wide scene, or a wide cut of a tall one) when it fills the frame around the camera's focus.
+ */
+export function drawGuides(g: Ctx2D, spec: SceneSpec, unitsPerPx: number) {
+  const { width: W, height: H } = spec.meta;
+  g.save();
+  g.lineWidth = unitsPerPx;
+  g.strokeStyle = cssVar("--fg-3");
+  g.setLineDash([4 * unitsPerPx, 4 * unitsPerPx]);
+  for (const k of [0.95, 0.9]) g.strokeRect((W * (1 - k)) / 2, (H * (1 - k)) / 2, W * k, H * k);
+  g.setLineDash([]);
+  if (W !== H) {
+    // the other shape (16:9 ↔ 9:16), as tall (or wide) as the scene, centred on the focus but kept inside it
+    const [fx, fy] = spec.camera?.focus ?? [W / 2, H / 2];
+    const [cw, ch] = W > H ? [(H * H) / W, H] : [W, (W * W) / H];
+    const x = Math.min(W - cw, Math.max(0, fx - cw / 2)), y = Math.min(H - ch, Math.max(0, fy - ch / 2));
+    g.strokeStyle = cssVar("--accent");
+    g.strokeRect(x, y, cw, ch);
+    g.fillStyle = cssVar("--accent");
+    g.font = `${11 * unitsPerPx}px sans-serif`;
+    g.fillText(W > H ? "9:16 cut" : "16:9 cut", x + 4 * unitsPerPx, y + 14 * unitsPerPx);
+  }
+  g.restore();
+}

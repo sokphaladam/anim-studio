@@ -47,22 +47,26 @@ const cloud = (m: string): VideoProvider => {
   return runway({ apiKey: env.RUNWAY_API_KEY, model: m });
 };
 
-// price everything first: nothing paid starts unless the whole run fits --max-usd
-const quote = models.filter((m) => m !== "local").reduce((s, m) => s + cases.length * (cloud(m).estimateUsd?.({ durationSeconds: SECONDS, resolution: "720p" }) ?? Infinity), 0);
-console.log(`Quote: $${quote.toFixed(2)} for ${cases.length} cases × ${models.filter((m) => m !== "local").length} cloud model(s), limit $${maxUsd.toFixed(2)}`);
-if (quote > maxUsd) throw new Error(`The run would cost about $${quote.toFixed(2)}, over --max-usd ${maxUsd}`);
-
-type Row = { model: string; case: string; ok: boolean; seconds: number; costUsd?: number; frames?: number; size?: string; status?: string; checks?: string; error?: string; sheet?: string };
+// taskId is saved as soon as a paid task exists, so a clip lost after it was paid for can still be fetched from Runway
+type Row = { model: string; case: string; taskId?: string; ok: boolean; seconds: number; costUsd?: number; frames?: number; size?: string; status?: string; checks?: string; error?: string; sheet?: string };
 // one file per model list, so a local run and a cloud run can go at the same time
 const resultsFile = join(out, `results-${models.join("+")}.json`);
 const rows: Row[] = existsSync(resultsFile) ? JSON.parse(readFileSync(resultsFile, "utf8")) : [];
 const save = () => writeFileSync(resultsFile, JSON.stringify(rows, null, 1));
 
+// price what is still to make first (clips already made are kept): nothing paid starts unless it all fits --max-usd
+const todo = models.filter((m) => m !== "local").flatMap((m) => cases.filter((c) => !rows.some((r) => r.model === m && r.case === c && r.ok)).map(() => m));
+const quote = todo.reduce((s, m) => s + (cloud(m).estimateUsd?.({ durationSeconds: SECONDS, resolution: "720p" }) ?? Infinity), 0);
+console.log(`Quote: $${quote.toFixed(2)} for ${todo.length} cloud clip(s) to make, limit $${maxUsd.toFixed(2)}`);
+if (quote > maxUsd) throw new Error(`The run would cost about $${quote.toFixed(2)}, over --max-usd ${maxUsd}`);
+
 for (const c of cases) {
   const v = validateScene(JSON.parse(readFileSync(join(ROOT, "packages/spec/examples", `${CASES[c].scene}.json`), "utf8")));
   if (!v.ok) throw new Error(v.errors[0]);
   const image = await renderPng({ ...v.spec, overlays: v.spec.overlays.filter((o) => o.type !== "fade" && o.type !== "title") }, CASES[c].t, imagesDir);
-  writeFileSync(join(out, "sheets", `${c}-first-frame.png`), image);
+  // a small JPG of the first frame beside the sheets (the PNG stays out of the repo)
+  writeFileSync(join(imagesDir, `${c}-first-frame.png`), image);
+  execFileSync(ffmpegBin, ["-v", "error", "-y", "-i", join(imagesDir, `${c}-first-frame.png`), "-vf", "scale=320:-1", "-q:v", "3", join(out, "sheets", `${c}-first-frame.jpg`)]);
   for (const m of models) {
     if (rows.some((r) => r.model === m && r.case === c && r.ok)) continue; // resumable: done cases are kept
     const t0 = Date.now();
@@ -74,7 +78,7 @@ for (const c of cases) {
         m === "local"
           ? comfyui({ url: env.COMFY_URL || "http://127.0.0.1:8188", dir: env.COMFY_DIR || join(ROOT, "data", "comfyui") }).animate!
           : async (a: { image: Uint8Array; positive: string; frames: number; fps: number; seed: number }) => {
-              const r = await generateVideo(cloud(m), { prompt: a.positive, firstFrame: a.image, durationSeconds: a.frames / a.fps, aspect: "16:9", resolution: "720p", seed: a.seed, audio: "none" }, { maxCostUsd: maxUsd });
+              const r = await generateVideo(cloud(m), { prompt: a.positive, firstFrame: a.image, durationSeconds: a.frames / a.fps, aspect: "16:9", resolution: "720p", seed: a.seed, audio: "none" }, { maxCostUsd: maxUsd, onTask: (t) => void ((row.taskId = t.providerTaskId), save()) });
               cost = r.task.estimatedCostUsd;
               return r.bytes;
             };

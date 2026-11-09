@@ -69,6 +69,21 @@ it("rides out a lost connection and a rate limit while polling", async () => {
   expect([...r.bytes]).toEqual([7]);
 });
 
+it("downloads a finished clip again when the connection drops mid-download (it is paid for)", async () => {
+  let downloads = 0;
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/v1/image_to_video")) return Response.json({ id: "t1", status: "PENDING", estimatedCost: { credits: 50 } });
+    if (url === "https://cdn/out.mp4") {
+      if (++downloads === 1) throw new TypeError("fetch failed");
+      return new Response(new Uint8Array([5]));
+    }
+    return Response.json({ id: "t1", status: "SUCCEEDED", output: ["https://cdn/out.mp4"] });
+  });
+  const r = await generateVideo(runway({ apiKey: "k", model: "seedance2_5" }), req, { pollMs: 1 });
+  expect([...r.bytes]).toEqual([5]);
+  expect(downloads).toBe(2);
+});
+
 it("asks again when creating is rate-limited (no task was made), and says so plainly when offline", async () => {
   const calls = fakeRunway([{ status: "SUCCEEDED", output: ["https://cdn/out.mp4"] }]);
   const real = globalThis.fetch;
@@ -78,10 +93,14 @@ it("asks again when creating is rate-limited (no task was made), and says so pla
   expect(limited).toBe(-1);
   expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
 
+  // a DNS failure never reached Runway, so it is asked again; a dropped connection might have made a task, so it isn't
+  let creates = 0;
   vi.stubGlobal("fetch", async () => {
-    throw new TypeError("fetch failed");
+    creates++;
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: creates < 4 ? "EAI_AGAIN" : "ECONNRESET" } });
   });
-  await expect(generateVideo(runway({ apiKey: "k", model: "seedance2_5" }), req, { pollMs: 1 })).rejects.toThrow(/Can't reach Runway/);
+  await expect(generateVideo(runway({ apiKey: "k", model: "seedance2_5" }), req, { pollMs: 1 })).rejects.toThrow(/Can't reach Runway \(ECONNRESET\)/);
+  expect(creates).toBe(4);
 });
 
 it("refuses models it doesn't know the request shape of", () => {

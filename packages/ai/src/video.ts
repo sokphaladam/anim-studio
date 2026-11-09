@@ -63,7 +63,7 @@ export function runway(opts: { apiKey: string; model: string; baseUrl?: string }
       if (signal?.aborted) throw e;
       // offline, DNS, refused: status 0, so polling treats it like a brief outage
       const cause = (e as { cause?: { code?: string; message?: string } }).cause;
-      throw Object.assign(new AIError(`Can't reach Runway (${cause?.code ?? cause?.message ?? (e as Error).message})`, "Check the internet connection; the editable scene is unaffected"), { status: 0 });
+      throw Object.assign(new AIError(`Can't reach Runway (${cause?.code ?? cause?.message ?? (e as Error).message})`, "Check the internet connection; the editable scene is unaffected"), { status: 0, net: cause?.code });
     }
     if (res.ok) return res.status === 204 ? {} : ((await res.json()) as Record<string, unknown>);
     const text = (await res.text()).slice(0, 300);
@@ -98,9 +98,15 @@ export function runway(opts: { apiKey: string; model: string; baseUrl?: string }
       if (next.status !== "succeeded") return { task: next };
       const url = (r.output as string[] | undefined)?.[0];
       if (!url) return { task: { ...next, status: "failed" }, error: "Runway finished without a video" };
-      const res = await fetch(url, { signal });
-      if (!res.ok) throw new AIError(`Couldn't download the Runway video (${res.status})`);
-      return { task: next, bytes: new Uint8Array(await res.arrayBuffer()) };
+      // the task is paid for by now: a dropped download counts as an outage (status 0), so polling asks again
+      try {
+        const res = await fetch(url, { signal });
+        if (!res.ok) throw Object.assign(new AIError(`Couldn't download the Runway video (${res.status})`), { status: res.status >= 500 ? res.status : 0 });
+        return { task: next, bytes: new Uint8Array(await res.arrayBuffer()) };
+      } catch (e) {
+        if (signal?.aborted || (e as { status?: number }).status !== undefined) throw e;
+        throw Object.assign(new AIError(`Couldn't download the Runway video (${(e as Error).message})`), { status: 0 });
+      }
     },
     async cancelTask(task) {
       await call("DELETE", `/v1/tasks/${task.providerTaskId}`);
@@ -127,14 +133,20 @@ export async function generateVideo(p: VideoProvider, q: VideoGenerationRequest,
   return pollVideo(p, task, o);
 }
 
-/** A 429 on create means no task was made, so asking again is safe (a 5xx might have made one, so it is never retried). */
+/** Failures where the request never reached the provider: no DNS answer, nothing listening. */
+const NOT_SENT = new Set(["EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED"]);
+
+/**
+ * A create that was rate-limited (429) or never sent (DNS, refused) made no task, so asking again is safe. Anything else,
+ * like a 5xx or a connection dropped mid-request, might have made one, so it is never retried.
+ */
 async function createWithRetry(p: VideoProvider, q: VideoGenerationRequest, signal: AbortSignal | undefined, pollMs: number) {
   for (let i = 0; ; i++) {
     try {
       return await p.createTask(q, signal);
     } catch (e) {
-      const { status, retryAfter } = e as { status?: number; retryAfter?: number };
-      if (status !== 429 || i >= 3) throw e;
+      const { status, retryAfter, net } = e as { status?: number; retryAfter?: number; net?: string };
+      if (!(status === 429 || (status === 0 && net && NOT_SENT.has(net))) || i >= 3) throw e;
       await sleep(Math.min(60_000, retryAfter ? retryAfter * 1000 : pollMs * 2 ** i), undefined, { signal });
     }
   }

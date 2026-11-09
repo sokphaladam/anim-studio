@@ -200,13 +200,18 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
       for (let i = 0; i < maxSeconds; i++) {
         await sleep(1000);
         if (signal?.aborted) throw new Error("Cancelled");
-        const h = (await (await fetch(`${url}/history/${id}`)).json()) as Record<string, { outputs?: Record<string, Record<string, unknown>>; status?: { status_str?: string; completed?: boolean; messages?: unknown[] } }>;
+        const res = await fetch(`${url}/history/${id}`).catch(() => {
+          // ComfyUI went away mid-job: on a big model that is almost always the process running out of memory
+          throw new AIError(`The ${what} stopped while working (ComfyUI closed)`, "This usually means the PC ran out of memory. Close other apps and try again; ComfyUI restarts on its own.");
+        });
+        const h = (await res.json()) as Record<string, { outputs?: Record<string, Record<string, unknown>>; status?: { status_str?: string; completed?: boolean; messages?: unknown[] } }>;
         const job = h[id];
         if (job?.status?.status_str === "error") {
           // the execution_error message names the failing node and the real cause (the rest is a dump of its inputs)
           const err = (job.status.messages ?? []).find((m): m is [string, { node_type?: string; exception_message?: string }] => Array.isArray(m) && m[0] === "execution_error")?.[1];
           const cause = err?.exception_message?.trim().split("\n")[0];
-          const lowRam = /not enough memory|DefaultCPUAllocator/i.test(cause ?? "");
+          // read_file_slice: loading the model into RAM failed (seen on 32 GB with the 9.5 GB Wan model, as a MemoryError)
+          const lowRam = /not enough memory|DefaultCPUAllocator|MemoryError|read_file_slice/i.test(cause ?? "");
           throw new AIError(
             `The ${what} failed${cause ? ` in ${err?.node_type ?? "a node"}: ${cause.slice(0, 200)}` : ""}`,
             lowRam

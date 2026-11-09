@@ -1,5 +1,5 @@
 import { Button, Dialog, Dropdown, NumberField, StatusPill, Toggle, cx, useToast, type MenuAction } from "@anim/ui";
-import { Clapperboard, Ellipsis, Film, Plus, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
+import { Clapperboard, Ellipsis, Film, Plus, Wind, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useMemo, useState } from "react";
 import { SceneThumb } from "../components/SceneThumb";
@@ -79,7 +79,14 @@ export function Welcome() {
     cap === undefined ? null
     : shotUsd != null && shotUsd > cap ? `about $${shotUsd.toFixed(2)} per ${shotSeconds} s shot, over the $${cap.toFixed(2)} limit: no shot will be made (raise RUNWAY_MAX_COST_USD)`
     : `about $${shotUsd?.toFixed(2) ?? "?"} per ${shotSeconds} s shot, never more than $${cap.toFixed(2)} a scene with retries`;
-  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, cinematic: cinematic && !!shotModel }, true);
+  // natural motion: one clip that divides the scene (the server's loopShot: at most 8 s), looped over it
+  const [natural, setNatural] = useState(false);
+  const loopSeconds = +(duration / Math.ceil(duration / 8)).toFixed(1);
+  const loopUsd = painter?.cloudQuote?.usdBySeconds[Math.max(4, Math.round(loopSeconds))];
+  const loopNote = painter?.cloudVideo
+    ? `${shotModel} · paid: about $${loopUsd?.toFixed(2) ?? "?"} for a ${loopSeconds} s loop${cap !== undefined && loopUsd != null && loopUsd > cap ? `, over the $${cap.toFixed(2)} limit (raise RUNWAY_MAX_COST_USD)` : ""}`
+    : `local · about ${Math.round(loopSeconds * 3)} min for a ${loopSeconds} s loop`;
+  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, cinematic: cinematic && !!shotModel, loop: natural && !!shotModel }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   useEffect(() => {
@@ -161,6 +168,14 @@ export function Welcome() {
             })}
           </div>
           <NumberField className="w-72" label="Duration" unit="s" value={duration} min={5} max={30} step={1} slider onChange={(v) => setDuration(Math.round(v))} />
+          {shotModel && (
+            <div className="flex items-center gap-2">
+              <Toggle pressed={natural} onPressedChange={setNatural} label={`Animate the finished scene with ${shotModel} for natural motion (walking, breathing, hair), looped seamlessly over the editable layers`} icon={<Wind size={16} strokeWidth={1.5} />}>
+                Natural motion (video AI loop)
+              </Toggle>
+              <span className="font-mono text-micro text-fg-3">{loopNote}</span>
+            </div>
+          )}
           {shotModel && (
             <div className="flex items-center gap-2">
               <Toggle pressed={cinematic} onPressedChange={setCinematic} label={`Also make a cinematic AI video clip from the same plan with ${shotModel}${painter?.cloudVideo ? " (paid cloud service)" : ""}`} icon={<Film size={16} strokeWidth={1.5} />}>

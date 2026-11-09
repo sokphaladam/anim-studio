@@ -1,4 +1,4 @@
-import { AIError, cinematicShots, clipChecks, generateLayered, paintView, sceneChecks, videoPrompt, worst, VIDEO_SIZE, type AnimateFn, type ClipStats, type Footage, type LayeredEvent, type LayeredPlan, type LayeredTools, type Provider } from "@anim/ai";
+import { AIError, cinematicShots, clipChecks, loopShot, generateLayered, paintView, sceneChecks, videoPrompt, worst, VIDEO_SIZE, type AnimateFn, type ClipStats, type Footage, type LayeredEvent, type LayeredPlan, type LayeredTools, type Provider } from "@anim/ai";
 import { AssetSchema, CharacterProfileSchema, SceneSpecSchema, type CinematicShot, type SceneSpec } from "@anim/spec";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -10,6 +10,8 @@ const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation
   assets: z.record(z.string(), AssetSchema).optional(),
   // also make cinematic AI video shots from the same plan (cloud when configured, else the local video model)
   cinematic: z.boolean().default(false),
+  // natural motion: the video model animates the whole finished scene as a seamless loop, shown above its layers
+  loop: z.boolean().default(false),
 });
 
 const VIDEO_NEGATIVE = "static image, still frame, blurry, distorted face, deformed hands, morphing, flickering, jitter, low quality, watermark, text";
@@ -47,14 +49,16 @@ export function generateRoutes(
       // the quality report: what failed or needs a person's look (flagged parts, pivots, mesh weights)
       emit({ type: "quality", items: sceneChecks(spec) });
       // the editable scene is done (and saved by the editor) before any video: a failed shot never costs the scene
-      if (r.data.cinematic && plan) await makeShots(spec, plan, emit, signal);
+      if (plan && (r.data.cinematic || r.data.loop)) await makeShots(spec, plan, emit, signal, { cinematic: r.data.cinematic, loop: r.data.loop });
     });
     return { jobId };
   });
 
   /** Cinematic shots of a finished editable scene, each from its own first frame; failures are warnings, not errors. */
-  async function makeShots(spec: SceneSpec, plan: LayeredPlan, emit: (e: JobEvent) => void, signal: AbortSignal) {
-    const shots = cinematicShots(plan, spec.meta.duration).map((s) => ({ id: s.id, start: s.start, end: s.end, prompt: videoPrompt(s.motion, plan.environment) }));
+  async function makeShots(spec: SceneSpec, plan: LayeredPlan, emit: (e: JobEvent) => void, signal: AbortSignal, want: { cinematic: boolean; loop: boolean }) {
+    // the loop first: it is what the scene plays; cinematic shots are extras beside it
+    const list = [...(want.loop ? [loopShot(plan, spec.meta.duration)] : []), ...(want.cinematic ? cinematicShots(plan, spec.meta.duration) : [])];
+    const shots = list.map((s) => ({ id: s.id, start: s.start, end: s.end, prompt: videoPrompt(s.motion, plan.environment) }));
     await runShots(spec, shots, emit, signal);
   }
 

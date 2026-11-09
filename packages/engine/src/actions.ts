@@ -100,6 +100,9 @@ function holdKeys(spec: SceneSpec, a: Action, turned: number): Keys {
  * The x/y offsets of a path: out through the points and back to rest, timed by distance, within start..end. A walker
  * is painted facing right, so `flip` mirrors it while it moves left.
  */
+/** Seconds per step of a walk, and how high each step lifts the walker (scene px, times the action's amount). */
+const STEP = 0.32, LIFT = 3;
+
 function pathKeys(a: Action, duration: number): { x: Keys; y: Keys; flip: Keys } {
   const pts = a.points!;
   const route = [...pts, ...pts.slice(0, -1).reverse()];
@@ -109,7 +112,19 @@ function pathKeys(a: Action, duration: number): { x: Keys; y: Keys; flip: Keys }
   let at = start;
   const x: Keys = [], y: Keys = [], flip: Keys = [];
   route.forEach((p, i) => {
-    if (i) at += (lens[i - 1] / total) * span;
+    if (i) {
+      // a walk, not a glide: an even pace with a short ease at each end, and a small lift on every step
+      const t0 = at, t1 = at + (lens[i - 1] / total) * span, q = route[i - 1];
+      const steps = Math.max(1, Math.round((t1 - t0) / STEP));
+      for (let s = 1; s < steps * 2; s++) {
+        const u = s / (steps * 2), e = Math.min(1, u / 0.12, (1 - u) / 0.12);
+        const pace = u < 0.12 ? (u * u) / 0.24 : u > 0.88 ? 1 - ((1 - u) * (1 - u)) / 0.24 : (u - 0.06) / 0.88;
+        const t = +(t0 + u * (t1 - t0)).toFixed(4);
+        x.push([t, +(q[0] + (p[0] - q[0]) * pace - pts[0][0]).toFixed(2)]);
+        y.push([t, +(q[1] + (p[1] - q[1]) * pace - pts[0][1] - (s % 2 ? LIFT * a.amount * e : 0)).toFixed(2)]);
+      }
+      at = t1;
+    }
     const t = +at.toFixed(4);
     x.push([t, p[0] - pts[0][0]]);
     y.push([t, p[1] - pts[0][1]]);
@@ -139,7 +154,9 @@ export function actionTracks(spec: SceneSpec, a: Action, make: CanvasFactory = d
       return { rotation: { keys: lookAtKeys(spec, a, make), ease: a.ease } };
     case "path": {
       const { x, y, flip } = pathKeys(a, D);
-      return { x: { keys: x, ease: a.ease }, y: { keys: y, ease: a.ease }, ...(flip.some(([, v]) => v) && { flip: { keys: flip, ease: "step" } }) };
+      // the keys already carry the pace: x runs straight between them (easing again would stop at every key); y eases,
+      // so each step lifts and lands in an arc
+      return { x: { keys: x, ease: "linear" }, y: { keys: y, ease: "inOut" }, ...(flip.some(([, v]) => v) && { flip: { keys: flip, ease: "step" } }) };
     }
     case "breathe":
       return { scale: loop(a.period ?? 4, (p) => [[0, 0], [p / 2, 0.012 * k], [p, 0]]) };

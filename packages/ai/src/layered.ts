@@ -58,6 +58,38 @@ export const LayeredPlanSchema = z.object({
 export type LayeredPlan = z.output<typeof LayeredPlanSchema>;
 const planJsonSchema = z.toJSONSchema(LayeredPlanSchema, { io: "input" });
 
+const SIP = /\b(sip|sips|sipping|drink|drinks|drinking)\b/i;
+/**
+ * Repairs the staging mistakes that make a scene look pasted together, instead of sending the plan back (models repeat
+ * them): a cloud painted as a prop is painted into the sky instead (cut out on grey it came back as a flat disc, and a
+ * drawn cloud overlay can't tell sky from ceiling); a sip gets the arm that lifts the cup; a prop a character holds
+ * without a moving arm is dropped (it is painted in their hands), with any steam rising from it.
+ */
+export function tidyPlan(p: LayeredPlan): LayeredPlan {
+  const beats = p.beats.map((b) => `${b.label} ${b.note ?? ""}`).join(" ");
+  const clouds = p.props.filter((x) => /cloud/i.test(`${x.id} ${x.look}`));
+  const characters = p.characters.map((c) => {
+    const swings = c.parts.some((part) => part.motion === "swing");
+    // the sip in the beats belongs to the one character holding something to drink (or the only one)
+    const sips = SIP.test(c.pose) || (SIP.test(beats) && (p.characters.length === 1 || /hold/i.test(c.pose)));
+    if (!sips || swings || c.parts.length >= 2) return c;
+    const cup = p.props.find((x) => /mug|cup|tea|coffee|glass/i.test(`${x.id} ${x.look}`))?.id ?? "mug";
+    return { ...c, parts: [...c.parts, { id: "arm", find: `arm holding the ${cup}`, motion: "swing" as const }] };
+  });
+  const words = (s: string) => s.replace(/_/g, " ").toLowerCase();
+  const held = new Set(p.props.filter((x) => characters.some((c) => !c.parts.some((part) => part.motion === "swing") && new RegExp(`\\b${words(x.id)}\\b`).test(words(c.pose)))).map((x) => x.id));
+  const gone = new Set([...clouds.map((x) => x.id), ...held]);
+  if (!gone.size && characters.every((c, i) => c === p.characters[i])) return p;
+  return {
+    ...p,
+    environment: clouds.length && !/cloud/i.test(p.environment) ? `${p.environment}, ${clouds[0].look}` : p.environment,
+    characters,
+    props: p.props.filter((x) => !gone.has(x.id)),
+    ambient: p.ambient.filter((a) => !(a.at && gone.has(a.at))),
+    actions: p.actions.filter((a) => a.type !== "look_at" || !gone.has(a.target)),
+  };
+}
+
 /** Plan mistakes the schema can't see: unknown or duplicate ids, actions outside the scene, empty boxes. */
 export function planProblems(p: LayeredPlan, duration: number): string[] {
   const out: string[] = [];
@@ -95,6 +127,24 @@ export function cinematicShots(p: LayeredPlan, duration: number): Shot[] {
   if (p.shots.length) return p.shots;
   const motion = p.beats.map((b) => b.note ?? b.label).join(". ") || p.mood || "gentle natural motion";
   return [{ id: "scene", start: 0, end: Math.min(duration, SHOT_SECONDS[1]), motion }];
+}
+
+/** Longest video-loop clip: longer clips cost more and drift further from the first frame. */
+const LOOP_MAX = 8;
+const IDLE_WORDS = { breathe: "breathes slowly", bob: "nods gently to the music", blink: "blinks now and then" } as const;
+/**
+ * The one shot that animates the whole scene with natural motion, as a seamless loop: a clip length that divides the
+ * scene (two 6 s loops in 12 s), so its own loop point falls on the scene's; a still camera, so the loop has no jump;
+ * and what moves, from the plan (the video model moves what a cut-out can't: legs, bodies, hair).
+ */
+export function loopShot(p: LayeredPlan, duration: number): Shot {
+  const n = Math.ceil(duration / LOOP_MAX);
+  const end = Math.max(SHOT_SECONDS[0], +(duration / n).toFixed(3));
+  const who = p.characters.map((c) => [`the ${label(c.id)} ${c.idle.map((i) => IDLE_WORDS[i]).join(", ") || "stays calm and still"}`, ...c.parts.map((x) => `${x.motion === "swing" ? "lifts" : "gently moves"} the ${x.find}`)].join(" and "));
+  const acts = p.actions.flatMap((a) => (a.type === "walk" ? [`the ${label(a.who)} walks slowly with natural steps and comes back`] : a.type === "look_at" ? [`the ${label(a.who)} looks toward the ${label(a.target)}`] : []));
+  const fx = p.ambient.map((a) => ({ stars: "stars twinkle", "falling-leaves": "leaves fall gently", birds: "birds cross the sky", steam: "steam curls up", rain: "rain falls" })[a.type]);
+  const motion = [...who, ...acts, ...fx, "the camera stays completely still, calm continuous motion that could repeat forever"].join(". ");
+  return { id: "loop", start: 0, end, motion };
 }
 
 /** What the host provides: the painter (with the segmentation tools), the image store, and a PNG codec. */
@@ -184,6 +234,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const user = `Idea: ${req.prompt}\nDuration: ${duration} seconds (the video loops)\nAspect: ${req.aspect} (${W}x${H})${known}`;
   let plan: LayeredPlan | null = null;
   let feedback = "";
+  let lastProblems: string[] = [];
   for (let i = 0; i < 3 && !plan; i++) {
     let tokens = 0;
     const text = await provider.generateJSON({ system: prompt("layered", { duration: String(duration) }), user: user + feedback, schema: planJsonSchema, signal, onToken: () => ++tokens % 20 === 0 && emit({ type: "token", phase: "plan", tokens }) });
@@ -195,11 +246,14 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       continue;
     }
     const r = LayeredPlanSchema.safeParse(raw);
-    const problems = r.success ? planProblems(r.data, duration) : r.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`);
-    if (r.success && !problems.length) plan = { ...r.data, beats: r.data.beats.filter((b) => b.at <= duration).sort((a, b) => a.at - b.at) };
+    const tidy = r.success ? tidyPlan(r.data) : null;
+    const problems = tidy ? planProblems(tidy, duration) : r.error!.issues.map((x) => `${x.path.join(".")}: ${x.message}`);
+    lastProblems = problems;
+    if (tidy && !problems.length) plan = { ...tidy, beats: tidy.beats.filter((b) => b.at <= duration).sort((a, b) => a.at - b.at) };
     else feedback = `\nYour last plan had these problems; fix them:\n${problems.slice(0, 12).map((p) => `- ${p}`).join("\n")}`;
   }
-  if (!plan) throw new AIError("The model didn't return a usable layer plan", "Try again, or describe the scene more simply.");
+  // say what was still wrong, so a person (or a bug report) can see why
+  if (!plan) throw new AIError("The model didn't return a usable layer plan", `Try again, or describe the scene more simply. Last problems: ${lastProblems.slice(0, 3).join("; ") || "the answer wasn't valid JSON"}`);
   const meta: SceneSpec["meta"] = { title: plan.title, duration, fps: 30, width: W, height: H };
   emit({ type: "plan", plan, meta });
   await provider.unload?.(); // a 12 GB GPU can't hold the language model and the painter at once
@@ -230,7 +284,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const bgId = `${plan.setting}_background`;
   emit({ type: "asset", id: bgId, label: "Background", status: "running" });
   const [pw, ph] = PAINT_SIZE[req.aspect];
-  const bgPng = await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal });
+  const bgPng = await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${light}, detailed background, depth of field, atmospheric perspective, cinematic lighting`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal });
   const bg = await tools.decode(bgPng);
   const k = Math.max(W / bg.width, H / bg.height); // cover the frame without stretching
   back.push({ id: bgId, type: "image", params: { asset: bgId, x: r2((W - bg.width * k) / 2), y: r2((H - bg.height * k) / 2), w: r2(bg.width * k), h: r2(bg.height * k) } });

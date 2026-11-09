@@ -1,7 +1,7 @@
 import type { CinematicShot, SceneSpec } from "@anim/spec";
 import { useStudio } from ".";
 import { requestEdit, saveProject } from "./projects";
-import { profilesOf, relinkShot } from "./edit";
+import { placeLoop, profilesOf, relinkShot } from "./edit";
 import { overlayKey } from "./scenes";
 
 /** Layered generation's stages, in pipeline order. */
@@ -42,7 +42,7 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
  * Asks the server to generate a scene and follows its progress over SSE. The storyboard's beats land on the
  * timeline first; the finished scene replaces the current one as an undoable step.
  */
-export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean }, fromWelcome: boolean) {
+export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean }, fromWelcome: boolean) {
   const s = useStudio.getState();
   if (s.generation?.status === "running") return;
   const [width, height] = SIZE[req.aspect];
@@ -109,7 +109,7 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
     // people who prefer reduced motion aren't shown a scene that starts moving by itself
     st.set({ aiMarks: marksFor(d.spec), t: 0, playing: !st.display.still, hidden: {}, locked: {}, selected: null, selection: null });
     // with cinematic shots the job goes on; the editable scene is saved now, so a failed shot can't cost it
-    update(req.cinematic ? { message: "Editable scene ready; making the cinematic video…" } : { status: "done", message: "Done" });
+    update(req.loop ? { message: "Editable scene ready; animating it with natural motion…" } : req.cinematic ? { message: "Editable scene ready; making the cinematic video…" } : { status: "done", message: "Done" });
     saveProject("AI scene").catch(() => {}); // autosave retries
     const review = Object.entries(d.spec.assets ?? {}).filter(([, a]) => a.review).map(([id, a]) => `${id}: ${a.review}`);
     say({ role: "assistant", tone: "success", text: `Built ${d.spec.layers.length} layers${d.repairs ? ` (fixed after ${d.repairs} repair${d.repairs > 1 ? "s" : ""})` : ""}. Playing it now — undo (Ctrl+Z) to go back.${review.length ? " Please check the flagged parts:" : ""}`, details: review.length ? review : undefined });
@@ -186,13 +186,16 @@ function onShotEvents(on: On) {
     update({ assets: list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a] });
     const st = useStudio.getState();
     if (!d.shot || !st.spec) return;
-    // a redone shot also replaces its clip wherever it was placed on the timeline
-    const next = d.shot.footage ? relinkShot(st.spec, d.shot) : st.spec;
+    // the natural-motion loop plays over the scene as soon as it exists (a redo replaces it there); any other redone shot
+    // replaces its clip wherever it was placed on the timeline
+    const next = !d.shot.footage ? st.spec : d.shot.id === "loop" ? placeLoop(st.spec, d.shot) : relinkShot(st.spec, d.shot);
     st.commit("AI cinematic shot", { ...next, cinematic: [...(st.spec.cinematic ?? []).filter((c) => c.id !== d.id), d.shot] });
     saveProject("AI cinematic shot").catch(() => {});
     const cost = d.shot.costUsd !== undefined ? `, about $${d.shot.costUsd.toFixed(2)}` : "";
     const tries = d.shot.attempts > 1 ? ` after ${d.shot.attempts} tries` : "";
-    if (d.status === "done") say({ role: "assistant", tone: "success", text: `Cinematic shot “${d.id}” is ready${tries} (${d.start}–${d.end} s, ${d.source}${cost}). It is saved with the project beside the editable scene.` });
+    if (d.id === "loop" && d.shot.footage)
+      say({ role: "assistant", tone: d.status === "done" ? "success" : undefined, text: `Natural motion is on${tries} (${d.source}${cost}): the video model's ${d.end - d.start} s loop now plays over the scene${d.status === "review" ? `, but check it: ${d.message}` : ""}. The painted layers stay underneath; hide or delete the video_loop layer to edit them, or AI › Redo cinematic shots for another take.` });
+    else if (d.status === "done") say({ role: "assistant", tone: "success", text: `Cinematic shot “${d.id}” is ready${tries} (${d.start}–${d.end} s, ${d.source}${cost}). It is saved with the project beside the editable scene.` });
     else if (d.status === "review") say({ role: "assistant", text: `Cinematic shot “${d.id}” was made${tries} but needs your review: ${d.message}. AI › Redo cinematic shots tries again.` });
     else say({ role: "assistant", tone: "error", text: `Cinematic shot “${d.id}” failed${tries}: ${d.message}. The editable scene is unaffected; AI › Redo cinematic shots tries again.` });
   });

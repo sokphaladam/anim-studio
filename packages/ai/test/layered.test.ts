@@ -1,6 +1,6 @@
 import { evalTrack } from "@anim/engine";
 import { describe, expect, it } from "vitest";
-import { generateLayered, planProblems, LayeredPlanSchema, type LayeredEvent, type LayeredTools, type Painter, type Provider, type Raster } from "../src";
+import { generateLayered, planProblems, tidyPlan, LayeredPlanSchema, type LayeredEvent, type LayeredTools, type Painter, type Provider, type Raster } from "../src";
 import { cleanMask, despeckle, feather, fillHoles, grow, haloShare, maskBox, maskFrom, palette, paletteDrift, peelPale, neckPoint, partProblems, recut, reviewOf, shrink, smear, touchesEdge, type Mask } from "../src/masks";
 
 const PLAN = {
@@ -336,6 +336,25 @@ describe("lofi loops", () => {
   it("steam without a prop to rise from is sent back", () => {
     const bad = LayeredPlanSchema.parse({ ...LOFI, ambient: [{ type: "steam" }] });
     expect(planProblems(bad, 6).join()).toMatch(/steam needs "at"/);
+  });
+
+  it("repairs the plans that looked pasted together: a cloud prop, a held prop that can't move, a sip with no arm", () => {
+    const base = { ...PLAN, actions: [] };
+    const girl = { id: "girl", look: "girl, red scarf", pose: "sitting, holding a mug", box: [0.6, 0.3, 0.8, 0.8] };
+    const mug = { id: "mug", look: "orange mug", box: [0.65, 0.5, 0.7, 0.56] };
+    // the treehouse plan: a painted cloud, a mug held and also painted alone with steam, a sip in the beats, no arm
+    const t = tidyPlan(LayeredPlanSchema.parse({ ...base, beats: [{ at: 0, label: "calm" }, { at: 3, label: "sip tea" }], characters: [girl], props: [{ id: "cloud", look: "fluffy cloud", box: [0.1, 0.05, 0.3, 0.2], motion: "drift" }, mug], ambient: [{ type: "steam", at: "mug" }] }));
+    expect(t.props.map((x) => x.id)).toEqual(["mug"]); // kept: the new arm carries it
+    expect(t.characters[0].parts).toEqual([{ id: "arm", find: "arm holding the mug", motion: "swing" }]);
+    expect(t.ambient).toEqual([{ type: "steam", at: "mug" }]);
+    expect(t.environment).toBe("balcony, railing, night sky, city lights, fluffy cloud"); // the cloud is painted in the sky
+    expect(planProblems(t, 6)).toEqual([]);
+    // held with no sip: the mug is painted in her hands, so the separate one and its steam go
+    const still = tidyPlan(LayeredPlanSchema.parse({ ...base, characters: [girl], props: [mug], ambient: [{ type: "steam", at: "mug" }] }));
+    expect([still.props, still.ambient, still.characters[0].parts]).toEqual([[], [], []]);
+    // nothing to repair: the same plan back
+    const ok = LayeredPlanSchema.parse(base);
+    expect(tidyPlan(ok)).toBe(ok);
   });
 });
 

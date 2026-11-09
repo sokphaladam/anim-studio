@@ -446,3 +446,17 @@ export function placeShot(spec: SceneSpec, shot: CinematicShot): SceneSpec {
   for (let n = 2; findLayer(spec, id); n++) id = `shot-${shot.id}-${n}`;
   return { ...spec, layers: [...spec.layers, { id, type: "footage", params: { ...shot.footage, start: shot.start, trimIn: 0, trimOut: 0, loop: false, shot: shot.id } }] };
 }
+
+/**
+ * Shows the natural-motion loop over the scene: one footage layer on top of the painted layers (they stay, editable,
+ * underneath), looping for the whole scene with a crossfade at its seam. Its fps is set so one pass lasts exactly the
+ * shot's length (the model returns a few frames more or less), so its loop point falls on the scene's.
+ */
+export function placeLoop(spec: SceneSpec, shot: CinematicShot): SceneSpec {
+  if (!shot.footage) return spec;
+  const fps = +(shot.footage.count / (shot.end - shot.start)).toFixed(4);
+  const params = { ...shot.footage, fps, start: 0, trimIn: 0, trimOut: 0, loop: true, crossfade: 0.8, shot: shot.id };
+  const at = spec.layers.findIndex((l) => l.type === "footage" && l.params.shot === shot.id);
+  if (at >= 0) return mapLayer(spec, spec.layers[at].id, (l) => ({ ...l, params: { ...l.params, ...params } }));
+  return { ...spec, layers: [...spec.layers, { id: "video_loop", type: "footage", params }] };
+}

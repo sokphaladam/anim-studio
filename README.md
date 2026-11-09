@@ -105,6 +105,15 @@ In the editor, generated groups and parts appear in the Layers docker indented u
 
 In the app: type an idea on the welcome screen (or in the AI assistant docker) and press Generate. Beats appear on the timeline first; the scene replaces the current one as an undoable step and starts playing. Layers made by the AI show a spark until you edit them.
 
+## Natural motion (video AI loop)
+
+Cut-out layers can only slide, turn and scale, so a walking cat or a person shifting their weight never looks natural. Tick **Natural motion (video AI loop)** on the welcome screen.
+
+- **What happens:** after the editable scene is made, the video model (Runway when cloud video is on, else local Wan 2.2) animates its first frame with a still camera. The prompt names what moves, from the plan.
+- **Length:** the clip divides the scene evenly, at most 8 s (two 6 s loops in a 12 s scene). It plays as a `video_loop` footage layer over the painted layers with a crossfade at its seam, so the scene still loops seamlessly.
+- **Editing:** the painted layers stay underneath. Hide or delete `video_loop` to edit them, and **AI › Redo cinematic shots** for another take.
+- **Cost:** about $1.80 for a 6 s seedance loop, or about 3 minutes of local GPU time per second of video.
+
 ## Cinematic AI video (optional, paid when cloud)
 
 Tick **Cinematic AI video** on the welcome screen to also get video shots made from the same plan as the editable scene. The editable scene is always made first and stays the source of truth; shots are stored beside it (`spec.cinematic`), never as layers, so a failed or expensive shot can't break the scene. Each shot's first frame is the editable scene rendered at the shot's start (a fade-in is left out, so the clip doesn't start from black). The planner may pick up to two 4–10 s moments; with none, one shot covers the scene's first 10 s.

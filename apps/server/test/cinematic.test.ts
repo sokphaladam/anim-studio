@@ -91,6 +91,16 @@ it("one prompt makes the editable scene, its quality report, then a checked cine
   expect(SceneSpecSchema.safeParse({ ...spec, cinematic: [shot] }).success).toBe(true);
 }, 60_000); // the provider is polled every 5 s
 
+it("natural motion: one loop shot that divides the scene, made before any cinematic extras", async () => {
+  const f = fakeVideo([good]);
+  const { events } = await start(f.p);
+  const shots = final(await events("/api/generate", { ...REQ, cinematic: false, loop: true }));
+  expect(shots).toHaveLength(1);
+  expect(shots[0]).toMatchObject({ id: "loop", status: "ready" });
+  expect((shots[0] as unknown as { end: number; prompt: string }).end).toBe(6);
+  expect((shots[0] as unknown as { prompt: string }).prompt).toMatch(/camera stays completely still/);
+}, 60_000);
+
 it("retries a failed shot once, then succeeds without touching the scene", async () => {
   const f = fakeVideo(["down", good]);
   const { events } = await start(f.p);

@@ -205,6 +205,20 @@ describe("looping actions", () => {
     expect(apply(layerMatrix(s, g, 4.9, factory), 210, 160)[0]).toBeLessThan(apply(layerMatrix(s, g, 2, factory), 210, 160)[0]);
   });
 
+  it("a path is walked, not glided: an even pace, and a small lift on each step", () => {
+    const s = withActions([{ id: "walk", type: "path", part: "girl", start: 0, end: 6, points: [[200, 160], [500, 160]] }]);
+    const o = (t: number) => actionOffsets(s, "girl", t)!;
+    // mid-leg the pace is steady: equal time, (almost) equal distance
+    const d1 = o(1.2).x - o(0.9).x, d2 = o(2.1).x - o(1.8).x;
+    expect(d1).toBeGreaterThan(0);
+    expect(Math.abs(d1 - d2)).toBeLessThan(d1 * 0.1);
+    // the walker lifts a little and lands again, never sinking below where it walks
+    const ys = Array.from({ length: 60 }, (_, i) => o(0.5 + i * 0.03).y);
+    expect(Math.min(...ys)).toBeLessThan(-1);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(0.01);
+    expect([Math.round(o(3).x), Math.round(o(6).x)]).toEqual([300, 0]);
+  });
+
   it("swing reaches toward its target and comes back each cycle", () => {
     const s = withActions([{ id: "sip", type: "swing", part: "girl_head", target: "clock", period: 6 }]);
     expect(actionOffsets(s, "girl_head", 0)!.rotation).toBe(0);

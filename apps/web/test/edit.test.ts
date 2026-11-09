@@ -2,7 +2,7 @@ import { apply, layerMatrix, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addGaze, setCamera, setLook, setShot, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke, mapLayer, placeShot, relinkShot, replaceClip } from "../src/store/edit";
+import { addGaze, setCamera, setLook, setShot, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke, mapLayer, placeLoop, placeShot, relinkShot, replaceClip } from "../src/store/edit";
 import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
@@ -423,5 +423,18 @@ describe("cinematic shots on the timeline", () => {
     s = relinkShot(s, shot("a", "/api/images/new/"));
     expect(s.layers.at(-2)!.params).toMatchObject({ frames: "/api/images/new/", start: 1, trimIn: 0.5 });
     expect(s.layers.at(-1)!.params.frames).toBe("/api/images/bbb/");
+  });
+});
+
+describe("natural-motion loop", () => {
+  const loop = (frames: string, count: number) => ({ id: "loop", start: 0, end: 6, footage: { frames, count, fps: 24 }, status: "ready" as const, checks: [], attempts: 1, source: "fake", prompt: "" });
+  it("covers the scene with one looping clip timed to exactly the shot, and a redo replaces it in place", () => {
+    let s = placeLoop(blankScene("16:9"), loop("/api/images/aaa/", 150));
+    const l = s.layers.at(-1)!;
+    expect(l).toMatchObject({ id: "video_loop", type: "footage", params: { loop: true, shot: "loop", fps: 25 } }); // 150 frames over 6 s
+    expect(validateScene(s).ok).toBe(true);
+    s = placeLoop(s, loop("/api/images/bbb/", 144));
+    expect(s.layers.filter((x) => x.type === "footage")).toHaveLength(1);
+    expect(s.layers.at(-1)!.params).toMatchObject({ frames: "/api/images/bbb/", fps: 24 });
   });
 });

@@ -5,7 +5,7 @@ Output JSON only, no prose, with exactly these fields:
 - "mood": a few words about the feeling and lighting
 - "beats": 1-6 moments in time order, each {"at": seconds, "label": 1-3 words, "note": one short sentence}
 - "setting": one lowercase word naming the place (e.g. "treehouse", "bedroom", "hillside")
-- "environment": the empty setting for the background painting, as comma-separated English tags: place, furniture, plants, sky, time of day, weather, framing. No people, no animals, and none of the props listed below (they are painted separately).
+- "environment": the empty setting for the background painting, as comma-separated English tags. Start with the camera: where it looks from and how wide (e.g. "exterior view, wide shot, low angle" or "interior view, medium shot"), so it matches how the user pictures it ("at the window of a treehouse" seen from outside is an exterior view). Then: the place, what each character sits, leans or lies on (named and placed where their box is), plants, sky, time of day, weather. No people, no animals, and none of the props listed below (they are painted separately).
 - "lighting": 2-5 tags every layer shares so they match (e.g. "golden hour, warm sunlight")
 - "characters": 1-3 people or animals, each:
   - "id": lowercase word (e.g. "girl", "cat")
@@ -14,8 +14,8 @@ Output JSON only, no prose, with exactly these fields:
   - "box": [x0, y0, x1, y1]
   - "idle": small loops that make them feel alive, any of "breathe", "bob" (head nods to music), "blink"; [] for none
   - "parts": 0-2 body parts that move on their own, each {"id": lowercase word, "find": the part in a few plain words (e.g. "arm holding the mug", "tail"), "motion": "swing" (reaches toward "target" and back, e.g. sipping from a mug: target = their own head, leave it out) or "sway" (a tail, a dangling leg), "target": optional prop or character id}
-- "props": 0-4 objects that need their own layer because they move, an action looks at them, or they are in front of a character, each {"id": lowercase word, "look": tags, "box": [x0, y0, x1, y1], "front": true only if in front of a character, "motion": "none", "sway" (hanging lanterns, wind chimes, flowers) or "drift" (clouds)}
-- "ambient": 0-4 effects the engine draws over the painting, each {"type": "stars" | "falling-leaves" | "birds" | "steam" | "rain", "box": optional [x0, y0, x1, y1] where it happens, "at": for steam, the prop it rises from (e.g. a mug)}
+- "props": 0-4 objects that need their own layer because they move, an action looks at them, or they are in front of a character, each {"id": lowercase word, "look": tags, "box": [x0, y0, x1, y1], "front": true only if in front of a character, "motion": "none", "sway" (hanging lanterns, wind chimes, flowers) or "drift" (a floating lantern)}. Something a character holds (a mug, a book) is painted in their hands: list it as a prop only when their arm moves it (a "swing" part), so it moves with the hand.
+- "ambient": 0-4 effects the engine draws over the painting, each {"type": "stars" | "falling-leaves" | "birds" | "steam" | "rain", "box": optional [x0, y0, x1, y1] where it happens, "at": for steam, the prop it rises from (e.g. a mug)}. Clouds are painted into the sky in "environment", never a prop.
 - "actions": timed actions, each one of:
   - {"type": "look_at", "who": a character id, "target": a prop or other character id, "start": seconds, "end": seconds, "wakes": true if they wake up / open their eyes as it starts}
   - {"type": "walk", "who": a character id (usually an animal), "path": 2-6 points [x, y] its feet pass through, the first is where it rests, "start": seconds, "end": seconds}: it walks there and comes back. A walker is painted walking and keeps that pose the whole time (it can't nap first, stand up or sit down), so only give a walk to a character whose pose is walking or standing.
@@ -24,7 +24,14 @@ Output JSON only, no prose, with exactly these fields:
 
 Rules:
 - "box", "path" and "ambient.box" use fractions of the frame width and height (0 = left/top, 1 = right/bottom); x1 > x0 and y1 > y0. Keep boxes realistic in size: a mug is small (about 0.05 wide), a person at a window fills about a third of the height.
+- Compose like a professional illustrator:
+  - One clear focal point: the main character sits on a third of the frame (x about 0.25-0.4 or 0.6-0.75), not dead centre, and fills 30-60% of the height.
+  - Leave calm empty space (open sky, a plain wall) on the other side, where the character looks or faces.
+  - Build depth in three planes: the far setting, the characters in the middle, and something near the camera framing them (branches, leaves, a window edge, plants), named in "environment".
+  - Every character's box rests on what holds them: its bottom edge on the sill, branch, floor or table named in "environment", and pets and props at the same scale as the person next to them.
+  - Keep one small palette: the lighting tags name the main light and its colour (e.g. "warm late afternoon sun, orange and teal"), and the look and environment tags stay within it.
 - Lofi means calm: prefer idle loops and ambient effects over big actions. Most scenes need no actions at all.
+- A sip or drink needs a moving arm: give that character a part {"id": "arm", "find": "arm holding the mug", "motion": "swing"}. Give anyone awake "breathe" and "blink", and "bob" when they listen to music.
 - Keep everything else in "environment": only list a prop if it really needs its own layer.
 - Every prop sits on or against something in the environment (a clock hangs on a wall, a mug stands on a table): name that thing in "environment" and put the prop's box over where it will be, never over open sky (clouds excepted).
 - The animation lasts exactly {{duration}} seconds and then loops. Every "at", "start" and "end" is between 0 and {{duration}}; the first beat is at 0. A turn takes about 1.5-2 seconds.

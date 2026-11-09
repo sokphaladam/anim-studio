@@ -8,7 +8,8 @@ export const PAINT_SIZE: Record<Aspect, [number, number]> = { "16:9": [1344, 768
 
 /** The one look every scene is painted in: a soft lofi anime illustration. */
 export const LOOK = {
-  positive: "lofi anime illustration, cozy, soft lighting, clean lineart, flat colors, simple shading, calm atmosphere",
+  // illustration tags the anime checkpoint knows for a finished, lit painting (not a flat sketch)
+  positive: "lofi anime illustration, cozy, clean lineart, cel shading, soft lighting, rim light, limited color palette, calm atmosphere",
   negative: "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry, logo, 3d render, photo",
 };
 

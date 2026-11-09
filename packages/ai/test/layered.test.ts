@@ -1,7 +1,7 @@
 import { evalTrack } from "@anim/engine";
 import { describe, expect, it } from "vitest";
 import { generateLayered, planProblems, LayeredPlanSchema, type LayeredEvent, type LayeredTools, type Painter, type Provider, type Raster } from "../src";
-import { grow, haloShare, maskBox, maskFrom, peelPale, neckPoint, partProblems, smear, touchesEdge, type Mask } from "../src/masks";
+import { cleanMask, despeckle, feather, fillHoles, grow, haloShare, maskBox, maskFrom, palette, paletteDrift, peelPale, neckPoint, partProblems, recut, reviewOf, shrink, smear, touchesEdge, type Mask } from "../src/masks";
 
 const PLAN = {
   title: "waking on the balcony",
@@ -318,5 +318,121 @@ describe("lofi loops", () => {
   it("steam without a prop to rise from is sent back", () => {
     const bad = LayeredPlanSchema.parse({ ...LOFI, ambient: [{ type: "steam" }] });
     expect(planProblems(bad, 6).join()).toMatch(/steam needs "at"/);
+  });
+});
+
+describe("production artwork (M8)", () => {
+  it("every cut-out records its source, mask, crop, cleanup and a checklist, and reconstruction is reported", async () => {
+    const { spec } = await run();
+    const a = spec.assets!;
+    for (const id of ["girl_body", "girl_head", "clock"]) {
+      expect(a[id].mask && a[a[id].mask!].kind).toBe("mask");
+      expect(a[a[id].from!]).toBeDefined();
+      expect(a[id].crop).toHaveLength(4);
+      expect(a[id].cleanup).toBeDefined();
+      expect(a[id].checks!.find((c) => c.name === "cutout")?.status).toBe("pass");
+    }
+    expect(a.girl_body.from).toBe("girl_body_fill");
+    expect(a.girl_body_fill.kind).toBe("source");
+    expect(a.girl_body.checks!.map((c) => c.name)).toEqual(expect.arrayContaining(["reconstruction", "identity"]));
+    expect(a.girl_head.checks!.find((c) => c.name === "joint")?.status).toBe("pass");
+    // review is set exactly when a check isn't a pass
+    for (const x of Object.values(a)) if (x.checks) expect(!!x.review).toBe(x.checks.some((c) => c.status !== "pass"));
+  });
+
+  it("saves a character profile, and a second generation keeps it and paints with its look and seed", async () => {
+    const first = await run();
+    const profile = first.spec.characters!.girl;
+    expect(profile.look).toBe("girl, hoodie");
+    expect(first.spec.assets![profile.reference!].src).toBe(first.spec.assets!.girl_source.src);
+    expect(Object.keys(profile.palette).length).toBeGreaterThan(0);
+    expect(profile.proportions!.head).toBeGreaterThan(0);
+
+    const kept = { ...profile, look: "girl, red hoodie, short hair", notes: "keep the scarf" };
+    const f = fakeTools();
+    const seeds: number[] = [];
+    const paint = f.tools.painter.paint;
+    f.tools.painter.paint = (args) => (args.positive.includes("solo") && seeds.push(args.seed), paint(args));
+    const plan = { ...PLAN, actions: [{ ...PLAN.actions[0], end: 6 }], characters: [{ ...PLAN.characters[0], look: "a different girl" }] };
+    let asked = "";
+    const p: Provider = { name: "mock", model: "mock", generateJSON: async (a) => ((asked = a.user), JSON.stringify(plan)) };
+    const refs = { [profile.reference!]: first.spec.assets![profile.reference!] };
+    const spec = await generateLayered({ prompt: "the girl again", duration: 6, aspect: "16:9", characters: { girl: kept }, assets: refs }, p, f.tools, () => {});
+    expect(asked).toContain("girl: girl, red hoodie, short hair");
+    expect(seeds[0]).toBe(profile.seed);
+    expect(f.calls.some((c) => c.startsWith("paint"))).toBe(true);
+    expect(spec.characters!.girl).toEqual({ ...kept, reference: "girl_reference" });
+    expect(spec.assets!.girl_reference.src).toBe(first.spec.assets!.girl_source.src);
+    expect(spec.assets!.girl_body.checks!.find((c) => c.name === "identity")).toMatchObject({ status: "pass" });
+  });
+
+  it("flags a reused character whose colors drifted from the saved profile", async () => {
+    const first = await run();
+    const profile = { ...first.spec.characters!.girl, palette: { c1: "#00ff00", c2: "#0000ff" } };
+    const f = fakeTools();
+    const spec = await generateLayered({ prompt: "again", duration: 6, aspect: "16:9", characters: { girl: profile } }, provider([{ ...PLAN, actions: [{ ...PLAN.actions[0], end: 6 }] }]), f.tools, () => {});
+    expect(spec.assets!.girl_body.checks!.find((c) => c.name === "identity")?.status).toBe("review");
+    expect(spec.assets!.girl_body.review).toMatch(/differ from the saved girl profile/);
+    // no reference asset was passed, so the profile keeps none rather than pointing at nothing
+    expect(spec.characters!.girl.reference).toBeUndefined();
+  });
+});
+
+describe("mask cleanup and recut", () => {
+  const W = 40, H = 40;
+  const square = (x0: number, y0: number, x1: number, y1: number, m = new Uint8Array(W * H)) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[y * W + x] = 255;
+    return m;
+  };
+  const on = (m: Mask) => m.reduce((n, v) => n + (v >= 128 ? 1 : 0), 0);
+
+  it("fills small enclosed holes but not big ones or gaps open to the edge", () => {
+    const m = square(5, 5, 35, 35);
+    for (const i of [20 * W + 20, 20 * W + 21]) m[i] = 0; // pinhole
+    for (let y = 10; y < 20; y++) for (let x = 8; x < 18; x++) m[y * W + x] = 0; // big hole (100 px)
+    const out = fillHoles(m, W, H, 10);
+    expect(out[20 * W + 20]).toBe(255);
+    expect(out[12 * W + 10]).toBe(0);
+    expect(out[0]).toBe(0);
+  });
+
+  it("drops small specks, keeps the biggest island, and shrink undoes grow on a square", () => {
+    const m = square(5, 5, 25, 25);
+    m[38 * W + 38] = 255;
+    const out = despeckle(m, W, 4);
+    expect(out[38 * W + 38]).toBe(0);
+    expect(on(out)).toBe(400);
+    expect(on(despeckle(square(0, 0, 2, 1), W, 100))).toBe(2);
+    expect(on(shrink(grow(square(10, 10, 20, 20), W, H, 2), W, H, 2))).toBe(100);
+    expect(on(cleanMask(square(10, 10, 20, 20), W, H, { grow: -1 }))).toBe(64);
+  });
+
+  it("feather only lowers alpha at the edge", () => {
+    const r: Raster = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4) };
+    square(10, 10, 30, 30).forEach((v, i) => r.data.set([200, 50, 50, v], i * 4));
+    const f = feather(r, 2);
+    expect(f.data[(20 * W + 20) * 4 + 3]).toBe(255);
+    expect(f.data[(10 * W + 20) * 4 + 3]).toBeLessThan(255);
+    expect(f.data[(5 * W + 5) * 4 + 3]).toBe(0);
+  });
+
+  it("recut crops to the cleaned mask and fails a rectangular cut-out instead of passing it", () => {
+    const src: Raster = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4).fill(255) };
+    const disc = new Uint8Array(W * H).map((_, i) => (Math.hypot((i % W) - 20, ((i / W) | 0) - 20) < 8 ? 255 : 0));
+    const ok = recut(src, disc, { grow: 2 }, "disc");
+    expect(ok.crop).toEqual([11, 11, 30, 30]); // disc spans 13..27, grown by 2
+    expect(ok.checks.find((c) => c.name === "cutout")?.status).toBe("pass");
+    const box = recut(src, square(5, 5, 30, 30), {}, "box");
+    expect(box.checks.find((c) => c.name === "cutout")).toMatchObject({ status: "fail", note: expect.stringMatching(/opaque|rectangle/) });
+    expect(reviewOf(box.checks)).toMatch(/opaque|rectangle/);
+    expect(() => recut(src, new Uint8Array(W * H), {}, "nothing")).toThrow(/empty/);
+  });
+
+  it("palette finds the main colors and measures drift", () => {
+    const r: Raster = { width: 10, height: 10, data: new Uint8ClampedArray(400) };
+    for (let i = 0; i < 100; i++) r.data.set(i < 70 ? [200, 60, 110, 255] : [240, 200, 170, 255], i * 4);
+    expect(palette(r)).toEqual(["#c83c6e", "#f0c8aa"]);
+    expect(paletteDrift(["#c83c6e"], palette(r))).toBe(0);
+    expect(paletteDrift(["#00ff00"], palette(r))).toBeGreaterThan(60);
   });
 });

@@ -77,3 +77,32 @@ it("generates a layered scene over SSE, serves its assets, and it survives save,
   expect(restored.layers.find((l: { id: string }) => l.id === "girl_head")).toMatchObject({ parent: "girl_body" });
   expect((await app.inject({ method: "GET", url: restored.assets.girl_head.src })).statusCode).toBe(200);
 });
+
+it("re-cuts a part from its stored source and mask, refuses a cleanup that breaks it, and keeps profiles across generations", async () => {
+  // the test before restarts the app without a listener
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const addr = app.server.address();
+  base = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
+  const { jobId } = (await (await post("/api/generate", REQ)).json()) as { jobId: string };
+  type Spec = { assets: Record<string, { src: string; from?: string; mask?: string; crop?: number[] }>; characters: Record<string, { reference?: string; look: string }> };
+  const spec = (await events(jobId)).find((e) => e.type === "done")!.data.spec as Spec;
+  const head = spec.assets.girl_head;
+  const body = (cleanup: object) => ({ from: spec.assets[head.from!].src, mask: spec.assets[head.mask!].src, cleanup, name: "head" });
+
+  const r = await post("/api/parts/recut", body({ grow: -1, holes: 0, specks: 0, feather: 1 }));
+  expect(r.status).toBe(200);
+  const cut = (await r.json()) as { src: string; crop: number[]; checks: { name: string }[] };
+  expect(cut.crop[0]).toBeGreaterThan(head.crop![0]);
+  expect(cut.checks.map((c) => c.name)).toContain("edges");
+  expect((await fetch(`${base}${cut.src}`)).status).toBe(200);
+
+  expect((await post("/api/parts/recut", body({ grow: -20, holes: 0, specks: 0, feather: 0 }))).status).toBe(422);
+  expect((await post("/api/parts/recut", { ...body({}), from: "/api/images/000000000000000000000000.png" })).status).toBe(404);
+
+  // a second generation, handed the saved profile, keeps it as it was
+  const girl = { ...spec.characters.girl, look: "girl, hoodie, green scarf" };
+  const again = (await (await post("/api/generate", { ...REQ, characters: { girl }, assets: { [girl.reference!]: spec.assets[girl.reference!] } })).json()) as { jobId: string };
+  const next = (await events(again.jobId)).find((e) => e.type === "done")!.data.spec as Spec;
+  expect(next.characters.girl.look).toBe("girl, hoodie, green scarf");
+  expect(next.assets.girl_reference.src).toBe(spec.assets[girl.reference!].src);
+});

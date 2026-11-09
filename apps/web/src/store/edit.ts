@@ -1,5 +1,6 @@
 // Pure, immutable scene edits. Unchanged frames keep their identity, so the engine's per-frame caches stay valid.
-import type { DrawingFrame, Layer, SceneSpec, Stroke } from "@anim/spec";
+import { apply, boneTip, invert, layerMatrix, skeleton, type SkeletonKind, type SkeletonOptions } from "@anim/engine";
+import type { Asset, AssetCheck, Cleanup, DrawingFrame, IK, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
 
 type Pt = [number, number];
 type Transform = NonNullable<Layer["transform"]>;
@@ -48,7 +49,18 @@ export function newDrawingLayer(spec: SceneSpec, aboveId: string | null): { spec
 export function deleteLayer(spec: SceneSpec, id: string): SceneSpec {
   const up = findLayer(spec, id)?.parent;
   const layers = spec.layers.filter((l) => l.id !== id).map((l) => (l.parent === id ? { ...l, parent: up } : l));
-  return { ...spec, layers, ...(spec.actions && { actions: spec.actions.filter((a) => a.part !== id && a.target !== id) }) };
+  return forgetRig({ ...spec, layers, ...(spec.actions && { actions: spec.actions.filter((a) => a.part !== id && a.target !== id) }) }, id);
+}
+
+/** Drops a removed layer from IK chains (the chain goes) and meshes (its weights go; a mesh with no bones left goes). */
+function forgetRig(spec: SceneSpec, id: string): SceneSpec {
+  const layers = spec.layers.map((l) => {
+    if (!l.mesh?.bones.includes(id)) return l;
+    const k = l.mesh.bones.indexOf(id);
+    const bones = l.mesh.bones.filter((b) => b !== id);
+    return { ...l, mesh: bones.length ? { ...l.mesh, bones, ...(l.mesh.weights && { weights: l.mesh.weights.map((w) => w.filter((_, i) => i !== k)) }) } : undefined };
+  });
+  return { ...spec, layers, ...(spec.ik && { ik: spec.ik.filter((k) => ![k.upper, k.lower, k.target].includes(id)) }) };
 }
 
 /**
@@ -181,7 +193,12 @@ export function moveLayer(spec: SceneSpec, id: string, to: number): SceneSpec | 
 export function renameLayer(spec: SceneSpec, from: string, to: string): SceneSpec {
   const layers = spec.layers.map((l) => (l.id === from || l.parent === from ? { ...l, ...(l.id === from && { id: to }), ...(l.parent === from && { parent: to }) } : l));
   const swap = <T extends string | undefined>(id: T) => (id === from ? to : id) as T;
-  return { ...spec, layers, ...(spec.actions && { actions: spec.actions.map((a) => ({ ...a, part: swap(a.part), target: swap(a.target) })) }) };
+  return {
+    ...spec,
+    layers: layers.map((l) => (l.mesh?.bones.includes(from) ? { ...l, mesh: { ...l.mesh, bones: l.mesh.bones.map(swap) } } : l)),
+    ...(spec.actions && { actions: spec.actions.map((a) => ({ ...a, part: swap(a.part), target: swap(a.target) })) }),
+    ...(spec.ik && { ik: spec.ik.map((k) => ({ ...k, upper: swap(k.upper), lower: swap(k.lower), target: swap(k.target) })) }),
+  };
 }
 export const setFps = (spec: SceneSpec, fps: 12 | 24 | 30): SceneSpec => ({ ...spec, meta: { ...spec.meta, fps } });
 
@@ -210,4 +227,105 @@ export function setDuration(spec: SceneSpec, seconds: number): SceneSpec {
     beats: spec.beats.filter((b) => b.at <= d),
     layers: spec.layers.map((l) => (l.frames?.some((f) => f.start >= d) ? { ...l, frames: l.frames.filter((f) => f.start < d) } : l)),
   };
+}
+
+/** A re-cut part as the server returns it. */
+export type Recut = { src: string; width: number; height: number; crop: [number, number, number, number]; checks: AssetCheck[]; review: string | null };
+
+/**
+ * Swaps in a re-cut image for an asset. Every image layer showing it is moved and resized so the part stays exactly
+ * where it was in the scene (the crop may have grown or shrunk). A new cut-out needs a new look, so approval is reset.
+ */
+export function applyRecut(spec: SceneSpec, id: string, r: Recut, cleanup: Cleanup): SceneSpec {
+  const old = spec.assets?.[id];
+  if (!old?.crop) return spec;
+  const [ox, oy] = old.crop;
+  const layers = spec.layers.map((l) => {
+    const p = l.params as { asset?: unknown; x?: unknown; y?: unknown; w?: unknown; h?: unknown };
+    if (l.type !== "image" || p.asset !== id || ![p.x, p.y, p.w, p.h].every((v) => typeof v === "number")) return l;
+    const kx = (p.w as number) / old.width, ky = (p.h as number) / old.height; // scene units per source pixel
+    const r2 = (v: number) => +v.toFixed(2);
+    return { ...l, params: { ...l.params, x: r2((p.x as number) + (r.crop[0] - ox) * kx), y: r2((p.y as number) + (r.crop[1] - oy) * ky), w: r2(r.width * kx), h: r2(r.height * ky) } };
+  });
+  const next: Asset = { ...old, review: undefined, approved: undefined, src: r.src, width: r.width, height: r.height, crop: r.crop, cleanup, checks: r.checks, ...(r.review ? { review: r.review } : {}) };
+  return { ...spec, layers, assets: { ...spec.assets, [id]: next } };
+}
+
+/** A person accepted a flagged part as it is. */
+export const approveAsset = (spec: SceneSpec, id: string, approved: boolean): SceneSpec =>
+  spec.assets?.[id] ? { ...spec, assets: { ...spec.assets, [id]: { ...spec.assets[id], approved } } } : spec;
+
+/** Saved character profiles and their reference paintings, to hand to the next generation. */
+export function profilesOf(spec: SceneSpec | null): { characters?: SceneSpec["characters"]; assets?: Record<string, Asset> } {
+  if (!spec?.characters || !Object.keys(spec.characters).length) return {};
+  const refs = Object.values(spec.characters).flatMap((c) => (c.reference && spec.assets?.[c.reference] ? [[c.reference, spec.assets[c.reference]] as const] : []));
+  return { characters: spec.characters, assets: Object.fromEntries(refs) };
+}
+
+/**
+ * Adds a template skeleton under a character group, fitted to `box` (its parts' area). Bones are named
+ * `<group>_bone_<name>` so they never clash with the parts they move (`girl_head` vs `girl_bone_head`). Null if they exist.
+ */
+export function addSkeleton(spec: SceneSpec, group: string, kind: SkeletonKind, box: [number, number, number, number], opts: SkeletonOptions = {}): SceneSpec | null {
+  const bones = skeleton(kind, `${group}_bone`, group, box, opts);
+  if (bones.some((b) => findLayer(spec, b.id))) return null;
+  // bones draw nothing, so where they sit in the draw order doesn't matter: right after the group keeps them together
+  const i = spec.layers.findIndex((l) => l.id === group);
+  return { ...spec, layers: [...spec.layers.slice(0, i + 1), ...bones, ...spec.layers.slice(i + 1)] };
+}
+
+/** Changes a bone's length, angle or joint limits (undefined removes a limit). */
+export const setBoneParams = (spec: SceneSpec, id: string, patch: { length?: number; angle?: number; min?: number; max?: number }): SceneSpec =>
+  mapLayer(spec, id, (l) => {
+    const params: Record<string, unknown> = { ...l.params, ...patch };
+    for (const k of ["min", "max"] as const) if (k in patch && patch[k] === undefined) delete params[k];
+    return { ...l, params };
+  });
+
+/** Sets (or with null removes) an image layer's mesh. */
+export const setMesh = (spec: SceneSpec, id: string, mesh: Mesh | null): SceneSpec => mapLayer(spec, id, (l) => ({ ...l, mesh: mesh ?? undefined }));
+
+/**
+ * Adds two-bone IK to a limb: `lower` and its parent bone reach for a new target handle placed where the limb ends now
+ * (at time t). The handle sits at the scene root, so it stays put when the body moves; parent it to the character to make
+ * it travel along. The bend follows how the limb is drawn.
+ */
+export function addIK(spec: SceneSpec, lower: string, t: number): { spec: SceneSpec; target: string } | null {
+  const L = findLayer(spec, lower), U = L?.parent ? findLayer(spec, L.parent) : null;
+  if (L?.type !== "bone" || U?.type !== "bone" || !L.pivot || !U.pivot || spec.ik?.some((k) => [k.upper, k.lower].some((b) => b === L.id || b === U.id))) return null;
+  const target = uniqueId(spec, `${lower}_target`);
+  const at = apply(layerMatrix(spec, L, t), ...boneTip(L)).map((v) => +v.toFixed(2)) as Pt;
+  const [ex, ey] = L.pivot, [wx, wy] = boneTip(L);
+  const cross = (ex - U.pivot[0]) * (wy - U.pivot[1]) - (ey - U.pivot[1]) * (wx - U.pivot[0]);
+  const ik: IK = { id: uniqueIkId(spec, `${lower}_ik`), upper: U.id, lower: L.id, target, bend: cross < 0 ? -1 : 1, mix: 1 };
+  return { spec: { ...spec, layers: [...spec.layers, { id: target, type: "group", params: {}, pivot: at }], ik: [...(spec.ik ?? []), ik] }, target };
+}
+const uniqueIkId = (spec: SceneSpec, base: string) => {
+  let id = base;
+  for (let n = 2; spec.ik?.some((k) => k.id === id); n++) id = `${base}-${n}`;
+  return id;
+};
+
+export const setIK = (spec: SceneSpec, id: string, patch: Partial<Pick<IK, "bend" | "mix">>): SceneSpec => ({ ...spec, ik: spec.ik?.map((k) => (k.id === id ? { ...k, ...patch } : k)) });
+
+/** Removes an IK chain; its target handle goes too unless something else uses it. */
+export function removeIK(spec: SceneSpec, id: string): SceneSpec {
+  const k = spec.ik?.find((x) => x.id === id);
+  if (!k) return spec;
+  const next = { ...spec, ik: spec.ik!.filter((x) => x.id !== id) };
+  const used = next.ik.some((x) => x.target === k.target) || spec.layers.some((l) => l.parent === k.target) || spec.actions?.some((a) => a.part === k.target || a.target === k.target);
+  return used || findLayer(spec, k.target)?.type !== "group" ? next : deleteLayer(next, k.target);
+}
+
+/**
+ * Re-parents a layer (undefined = the scene root) without it jumping: its pivot is re-expressed in the new parent's space,
+ * so it stays where it is on screen at time t. Its own transform is kept as it is.
+ */
+export function reparentKeepingPlace(spec: SceneSpec, id: string, parent: string | undefined, t: number): SceneSpec {
+  const l = findLayer(spec, id);
+  if (!l?.pivot) return spec;
+  const world = apply(layerMatrix(spec, findLayer(spec, l.parent ?? null), t), ...l.pivot);
+  const np = findLayer(spec, parent ?? null);
+  const pivot = apply(invert(layerMatrix(spec, np, t)), ...world).map((v) => +v.toFixed(2)) as Pt;
+  return mapLayer(spec, id, (x) => ({ ...x, parent, pivot }));
 }

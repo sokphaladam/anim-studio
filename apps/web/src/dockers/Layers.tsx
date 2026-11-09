@@ -50,7 +50,8 @@ export function LayersDocker() {
   };
   const reviewOf = (id: string) => {
     const l = findLayer(spec, id);
-    return l?.type === "image" ? spec.assets?.[String(l.params.asset)]?.review : undefined;
+    const a = l?.type === "image" ? spec.assets?.[String(l.params.asset)] : undefined;
+    return a?.approved ? undefined : a?.review;
   };
   const toolbar = (
     <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line px-1">

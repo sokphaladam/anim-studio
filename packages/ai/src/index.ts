@@ -7,5 +7,5 @@ export { AIError, type Provider, type GenerateJSONArgs } from "./types";
 export { editScene, type EditResult } from "./edit";
 export { comfyui, comfyHealth, comfyInstall, CHECKPOINT, VIDEO_MODEL, VIDEO_SIZE, SEGMENT_MODEL, BG_REMOVAL_MODEL, type Painter, type PaintArgs, type AnimateArgs, type InpaintArgs } from "./painters/comfyui";
 export { generateLayered, planProblems, LayeredPlanSchema, type LayeredPlan, type LayeredTools, type LayeredEvent, type LayeredStage } from "./layered";
-export type { Raster } from "./masks";
+export { recut, reviewOf, maskFrom, type Raster, type Check, type Cleanup } from "./masks";
 export { findMotions, type PaintingInfo } from "./regions";

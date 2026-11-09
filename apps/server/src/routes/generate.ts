@@ -1,9 +1,14 @@
 import { AIError, generateLayered, videoPrompt, VIDEO_SIZE, type AnimateFn, type LayeredTools, type Provider } from "@anim/ai";
+import { AssetSchema, CharacterProfileSchema } from "@anim/spec";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { cancelJob, getJob, startJob, type JobEvent } from "../jobs";
 
-const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation in a few words").max(2000), duration: z.number().min(5).max(30), aspect: z.enum(["16:9", "9:16", "1:1"]) });
+const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation in a few words").max(2000), duration: z.number().min(5).max(30), aspect: z.enum(["16:9", "9:16", "1:1"]),
+  // saved character profiles and their reference paintings, so a new scene keeps the same characters
+  characters: z.record(z.string(), CharacterProfileSchema).optional(),
+  assets: z.record(z.string(), AssetSchema).optional(),
+});
 
 /** Layered generation: its tools, and whether the segmentation models are installed. */
 export type Layered = { tools: LayeredTools; ready: () => Promise<boolean> };

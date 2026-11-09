@@ -2,12 +2,13 @@ import type { Layer, SceneSpec } from "@anim/spec";
 import "./objects";
 import { layerPivot } from "./bounds";
 import { ctxOf, drawFrame, frameIndexAt, type CanvasFactory } from "./drawing";
-import { setCanvasFactory } from "./images";
+import { getImage, setCanvasFactory } from "./images";
 import { IDENTITY, mul, rotate, scale, translate, type Mat } from "./matrix";
 import { BLENDS } from "./objects/drawing";
 import { drawWith, getObject, makeEnv, parseParams, type Ctx2D } from "./registry";
 import { resolve } from "./resolve";
 import { actionOffsets } from "./actions";
+import { clampBone, drawMesh, meshPose, solveIK } from "./rig";
 
 export { catalog, validateScene, objectTypes, getObject, defineObject, type ObjectDef, type Env, type ValidationResult } from "./registry";
 export { evalTrack, integrate, EASE } from "./tracks";
@@ -17,6 +18,7 @@ export { BRUSH_PRESETS, drawStroke, strokePath, frameIndexAt, drawingPivot, type
 export { invert, apply, mul, type Mat } from "./matrix";
 export { objectBounds, layerPivot, type Box } from "./bounds";
 export { registerImage, getImage, imageSources, frameUrl, type Bitmap } from "./images";
+export { boneTip, clampBone, solveIK, meshPose, meshTriangles, drawMesh, rigProblems, skeleton, mirrorBone, type MeshPose, type RigProblem, type SkeletonKind, type SkeletonOptions } from "./rig";
 export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, MAX_TURN } from "./actions";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */
@@ -47,9 +49,10 @@ export const defaultFactory: CanvasFactory = (w, h) => {
 
 /**
  * Maps a layer's own coordinates to scene coordinates: camera, then each rig ancestor's transform from the root down,
- * then the layer's own (each rotates/scales about its own pivot).
+ * then the layer's own (each rotates/scales about its own pivot). Bones in an IK chain take their solved rotation, and
+ * every bone stays within its joint limits. `rest`: the bind pose, with every bone's own motion left out (for skinning).
  */
-export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, make: CanvasFactory = defaultFactory): Mat {
+export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, make: CanvasFactory = defaultFactory, rest = false): Mat {
   let m = IDENTITY;
   if (spec.camera) {
     const cam = resolve(spec.camera, spec, t);
@@ -59,13 +62,28 @@ export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, mak
   // a missing parent ends the chain; the length cap guards against cycles in unvalidated specs
   const chain: Layer[] = [];
   for (let l = layer; l && chain.length <= spec.layers.length; l = l.parent === undefined ? null : (spec.layers.find((x) => x.id === l!.parent) ?? null)) chain.unshift(l);
+  // the lower bone's IK rotation, solved together with its upper bone (which comes first in the chain)
+  let solvedLower: { id: string; r: number; mix: number } | null = null;
   for (const l of chain) {
+    const bone = l.type === "bone";
+    if (rest && bone) continue;
     // actions add on top of the layer's own transform
     const add = actionOffsets(spec, l.id, t);
-    if (!l.transform && !add) continue;
+    const ik = bone ? spec.ik?.find((k) => k.upper === l.id) : undefined;
+    const lower = solvedLower?.id === l.id ? solvedLower : null;
+    if (!l.transform && !add && !ik && !lower) continue;
     const tr = resolve({ x: 0, y: 0, rotation: 0, scale: 1, ...l.transform }, spec, t);
     const [px, py] = layerPivot(spec, l, make);
-    const x = tr.x + (add?.x ?? 0), y = tr.y + (add?.y ?? 0), r = tr.rotation + (add?.rotation ?? 0), k = tr.scale + (add?.scale ?? 0);
+    const x = tr.x + (add?.x ?? 0), y = tr.y + (add?.y ?? 0), k = tr.scale + (add?.scale ?? 0);
+    let r = tr.rotation + (add?.rotation ?? 0);
+    if (ik) {
+      const s = solveIK(spec, ik, m, { x, y, r, k }, t, make);
+      if (s) {
+        r += (s.upper - r) * s.mix;
+        solvedLower = { id: ik.lower, r: s.lower, mix: s.mix };
+      }
+    } else if (lower) r += (lower.r - r) * lower.mix;
+    if (bone) r = clampBone(l, r);
     const mirror: Mat = (add?.flip ?? 0) >= 0.5 ? [-1, 0, 0, 1, 0, 0] : IDENTITY;
     m = mul(m, mul(mul(mul(mul(translate(x + px, y + py), rotate(r)), scale(k)), mirror), translate(-px, -py)));
   }
@@ -150,7 +168,18 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
         let params = parseParams(def, l.params);
         const fade = actionOffsets(spec, l.id, t)?.opacity ?? 0;
         if (fade && "opacity" in params) params = { ...params, opacity: (resolve(params.opacity, spec, t) as number) + fade };
-        drawWith(ctx, def, params, t, env);
+        const pose = l.mesh && meshPose(spec, l, t, make);
+        const asset = pose ? spec.assets?.[String(l.params.asset)] : undefined;
+        const img = asset && getImage(asset.src);
+        if (pose && img) {
+          // a mesh layer: the image bent by its bones (opacity as the image object applies it)
+          const opacity = resolve(params.opacity, spec, t) as number;
+          if (opacity > 0) {
+            ctx.globalAlpha *= Math.min(1, opacity);
+            const full = mul(base, M);
+            drawMesh(ctx, img as CanvasImageSource & { width: number; height: number }, pose, 1.5 / (Math.sqrt(Math.abs(full[0] * full[3] - full[1] * full[2])) || 1));
+          }
+        } else if (!pose) drawWith(ctx, def, params, t, env);
         ctx.restore();
       }
       for (const o of spec.overlays) {

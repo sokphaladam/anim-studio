@@ -273,3 +273,154 @@ export function smear(r: Raster, region: Mask, known: Mask): { r: Raster; filled
   for (const i of todo) data[i * 4 + 3] = 0;
   return { r: { width: w, height: h, data }, filled };
 }
+
+/** Square erosion by r pixels: the mask's outside grown, inverted. */
+export function shrink(m: Mask, width: number, height: number, r: number): Mask {
+  const out = grow(m.map((v) => (v >= ON ? 0 : 255)), width, height, r);
+  return out.map((v) => (v ? 0 : 255));
+}
+
+/** Connected (4-neighbour) runs of pixels where `on(i)`, each as a list of indices. */
+function components(n: number, width: number, on: (i: number) => boolean): number[][] {
+  const seen = new Uint8Array(n);
+  const out: number[][] = [];
+  for (let s = 0; s < n; s++) {
+    if (seen[s] || !on(s)) continue;
+    const comp = [s];
+    seen[s] = 1;
+    for (let k = 0; k < comp.length; k++) {
+      const i = comp[k], x = i % width;
+      for (const j of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i - width, i + width])
+        if (j >= 0 && j < n && !seen[j] && on(j)) {
+          seen[j] = 1;
+          comp.push(j);
+        }
+    }
+    out.push(comp);
+  }
+  return out;
+}
+
+/** Fills holes inside the mask (gaps that don't reach the image edge) of up to `maxArea` pixels; bigger ones (the gap in a mug handle) stay. */
+export function fillHoles(m: Mask, width: number, height: number, maxArea: number): Mask {
+  const out = Uint8Array.from(m, (v) => (v >= ON ? 255 : 0));
+  const onEdge = (i: number) => {
+    const x = i % width, y = (i / width) | 0;
+    return x === 0 || y === 0 || x === width - 1 || y === height - 1;
+  };
+  for (const c of components(m.length, width, (i) => m[i] < ON)) if (c.length <= maxArea && !c.some(onEdge)) for (const i of c) out[i] = 255;
+  return out;
+}
+
+/** Drops islands of up to `maxArea` pixels (stray specks the segmenter caught). The biggest island always stays. */
+export function despeckle(m: Mask, width: number, maxArea: number): Mask {
+  const out = Uint8Array.from(m, (v) => (v >= ON ? 255 : 0));
+  const comps = components(m.length, width, (i) => m[i] >= ON);
+  const biggest = comps.reduce((b, c) => (c.length > b.length ? c : b), [] as number[]);
+  for (const c of comps) if (c !== biggest && c.length <= maxArea) for (const i of c) out[i] = 0;
+  return out;
+}
+
+/** Softens a cut-out's edge inward over `radius` pixels. Only lowers alpha, so no background color is pulled in. */
+export function feather(r: Raster, radius: number): Raster {
+  if (radius <= 0) return r;
+  const { width: w, height: h } = r;
+  const a = alphaMask(r);
+  // separable box blur of alpha; outside the image counts as transparent
+  const blur = (src: Float32Array, horizontal: boolean) => {
+    const out = new Float32Array(src.length);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let d = -radius; d <= radius; d++) {
+          const xx = horizontal ? x + d : x, yy = horizontal ? y : y + d;
+          if (xx >= 0 && yy >= 0 && xx < w && yy < h) s += src[yy * w + xx];
+        }
+        out[y * w + x] = s / (2 * radius + 1);
+      }
+    return out;
+  };
+  const soft = blur(blur(Float32Array.from(a), true), false);
+  const data = new Uint8ClampedArray(r.data);
+  for (let i = 0; i < a.length; i++) data[i * 4 + 3] = Math.min(a[i], Math.round(soft[i]));
+  return { width: w, height: h, data };
+}
+
+export type Cleanup = { grow?: number; holes?: number; specks?: number; feather?: number };
+
+/** Mask cleanup before cutting out: specks dropped, holes filled, then grown or shrunk. Feathering happens on the cut-out. */
+export function cleanMask(m: Mask, width: number, height: number, c: Cleanup): Mask {
+  let out = m;
+  if (c.specks) out = despeckle(out, width, c.specks);
+  if (c.holes) out = fillHoles(out, width, height, c.holes);
+  if (c.grow && c.grow > 0) out = grow(out, width, height, c.grow);
+  if (c.grow && c.grow < 0) out = shrink(out, width, height, -c.grow);
+  return out;
+}
+
+/** Cleanup for generated parts: drops stray specks under ~0.05% of the painting and fills pinholes under ~0.03%. */
+export const defaultCleanup = (width: number, height: number) => ({ grow: 0, holes: Math.round(width * height * 0.0003), specks: Math.round(width * height * 0.0005), feather: 0 });
+
+export type Check = { name: "cutout" | "edges" | "framing" | "coverage" | "joint" | "reconstruction" | "identity"; status: "pass" | "review" | "fail"; note?: string };
+
+/** The checklist every cut-out gets: a valid cut-out, clean edges, the whole subject in its painting, a sensible size. */
+export function partChecks(img: Raster, m: Mask, width: number, height: number, name: string): Check[] {
+  const problems = partProblems(img, name).map((p) => p.replace(/^[^:]+: /, ""));
+  const halo = haloShare(img);
+  const share = count(m) / (width * height);
+  return [
+    problems.length ? { name: "cutout", status: "fail", note: problems[0] } : { name: "cutout", status: "pass" },
+    { name: "edges", status: halo > 0.25 ? "review" : "pass", note: `${Math.round(halo * 100)}% of its edge is a white halo` },
+    touchesEdge(m, width, height) ? { name: "framing", status: "review", note: "It runs off the edge of its painting, so one side is cut straight; erase that side or regenerate" } : { name: "framing", status: "pass" },
+    { name: "coverage", status: share < 0.003 ? "review" : "pass", note: `The mask covers ${+(share * 100).toFixed(1)}% of its painting` },
+  ];
+}
+
+/** The notes of every check a person should look at; undefined when all passed. */
+export const reviewOf = (checks: Check[]) => checks.filter((c) => c.status !== "pass").map((c) => c.note ?? c.name).join("; ") || undefined;
+
+/** Cuts a part out of `src` with its cleaned mask, crops it to the part, removes halos and checks it. `crop` is where it sits in `src`. */
+export function recut(src: Raster, m: Mask, c: Cleanup, name: string): { image: Raster; crop: Box; checks: Check[] } {
+  const { width: w, height: h } = src;
+  const mm = cleanMask(m, w, h, c);
+  const box = maskBox(mm, w);
+  if (!box) throw new AIError(`The ${name} mask is empty after cleanup`, "Shrink it less, or drop fewer specks.");
+  const image = feather(defringe(peelPale(crop(cutout(src, mm), box))), c.feather ?? 0);
+  return { image, crop: box, checks: partChecks(image, mm, w, h, name) };
+}
+
+const hex2 = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+const rgbOf = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+/** The main colors of a cut-out's opaque pixels, most common first (up to n, each covering at least 2%). */
+export function palette(r: Raster, n = 5): string[] {
+  const bins = new Map<number, number[]>();
+  let total = 0;
+  for (let i = 0; i < r.width * r.height; i++) {
+    const d = r.data.subarray(i * 4, i * 4 + 4);
+    if (d[3] < ON) continue;
+    total++;
+    const key = ((d[0] >> 5) << 6) | ((d[1] >> 5) << 3) | (d[2] >> 5);
+    const b = bins.get(key) ?? [0, 0, 0, 0];
+    b[0]++;
+    b[1] += d[0];
+    b[2] += d[1];
+    b[3] += d[2];
+    bins.set(key, b);
+  }
+  const picked: number[][] = [];
+  for (const [c, R, G, B] of [...bins.values()].sort((a, b) => b[0] - a[0] || a[1] - b[1])) {
+    if (picked.length >= n || c < total * 0.02) break;
+    const rgb = [R / c, G / c, B / c];
+    if (!picked.some((p) => dist(p, rgb) < 40)) picked.push(rgb);
+  }
+  return picked.map((p) => `#${p.map(hex2).join("")}`);
+}
+
+/** How far a painting's colors are from a saved palette: mean distance of the saved top 3 to their nearest new color (0–441). */
+export function paletteDrift(saved: string[], now: string[]): number {
+  const top = saved.slice(0, 3).map(rgbOf), have = now.map(rgbOf);
+  if (!top.length || !have.length) return 0;
+  return top.reduce((s, c) => s + Math.min(...have.map((h) => dist(c, h))), 0) / top.length;
+}

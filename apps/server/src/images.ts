@@ -1,6 +1,7 @@
-import { AIError, findMotions, type AnimateFn, type LayeredTools, type Painter, type Provider } from "@anim/ai";
+import { AIError, findMotions, maskFrom, recut, reviewOf, type AnimateFn, type Raster, type LayeredTools, type Painter, type Provider } from "@anim/ai";
 import { createCanvas, ImageData, loadImage } from "@napi-rs/canvas";
 import { paintingBoxToScene } from "@anim/engine";
+import { CleanupSchema } from "@anim/spec";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
@@ -16,6 +17,20 @@ const NAME = /^[a-f0-9]{24}\.png$/;
 const CLIP = /^[a-f0-9]{24}$/;
 const FRAME = /^\d{3}\.jpg$/;
 
+async function decode(png: Uint8Array): Promise<Raster> {
+  const img = await loadImage(Buffer.from(png));
+  const g = createCanvas(img.width, img.height).getContext("2d");
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, img.width, img.height);
+  return { width: d.width, height: d.height, data: d.data };
+}
+
+function encode(r: Raster): Uint8Array {
+  const c = createCanvas(r.width, r.height);
+  c.getContext("2d").putImageData(new ImageData(r.data, r.width, r.height), 0, 0);
+  return c.toBuffer("image/png");
+}
+
 /** Paintings live as files (named by content hash) and scenes refer to them as /api/images/<name>.png. */
 export function imageStore(dir: string) {
   /** Content-addressed, so a src never changes meaning and is never deleted: undo, restore and old versions keep working. */
@@ -28,22 +43,7 @@ export function imageStore(dir: string) {
   return {
     /** What layered generation needs: the painter, this store and a PNG codec. */
     layeredWith(painter: Painter): LayeredTools {
-      return {
-        painter,
-        store: save,
-        async decode(png) {
-          const img = await loadImage(Buffer.from(png));
-          const g = createCanvas(img.width, img.height).getContext("2d");
-          g.drawImage(img, 0, 0);
-          const d = g.getImageData(0, 0, img.width, img.height);
-          return { width: d.width, height: d.height, data: d.data };
-        },
-        encode(r) {
-          const c = createCanvas(r.width, r.height);
-          c.getContext("2d").putImageData(new ImageData(r.data, r.width, r.height), 0, 0);
-          return c.toBuffer("image/png");
-        },
-      };
+      return { painter, store: save, decode, encode };
     },
     /** Animates with the painter's video model; the MP4 is split into JPEG frames the engine plays one by one. */
     animateWith(painter: Painter): AnimateFn | undefined {
@@ -82,6 +82,28 @@ export function imageStore(dir: string) {
           return { motions: info.motions, indoor: info.indoor, windows: info.windows.map((w) => paintingBoxToScene(w, img, b.data)) };
         } catch (e) {
           if (e instanceof AIError) return reply.code(503).send({ error: e.message, fix: e.fix });
+          throw e;
+        }
+      });
+
+      const Recut = z.object({ from: z.string(), mask: z.string(), cleanup: CleanupSchema, name: z.string().max(80).default("part") });
+      /**
+       * Re-cuts a part from its stored source and mask with new cleanup settings. Stateless: it stores the new cut-out
+       * and returns it; the editor applies it to the scene as an undoable step. A cut-out that fails its checks is refused.
+       */
+      app.post("/api/parts/recut", async (req, reply) => {
+        const b = Recut.safeParse(req.body);
+        if (!b.success) return reply.code(400).send({ error: b.error.issues[0].message });
+        const fromPng = this.read(b.data.from), maskPng = this.read(b.data.mask);
+        if (!fromPng || !maskPng) return reply.code(404).send({ error: "The part's source painting or mask is missing" });
+        const src = await decode(fromPng);
+        try {
+          const cut = recut(src, maskFrom(await decode(maskPng), src.width, src.height), b.data.cleanup, b.data.name);
+          const fail = cut.checks.find((c) => c.status === "fail");
+          if (fail) return reply.code(422).send({ error: `That cleanup breaks the ${b.data.name}: ${fail.note}`, fix: "Grow or shrink it less." });
+          return { src: save(encode(cut.image)), width: cut.image.width, height: cut.image.height, crop: cut.crop, checks: cut.checks, review: reviewOf(cut.checks) ?? null };
+        } catch (e) {
+          if (e instanceof AIError) return reply.code(422).send({ error: e.message, fix: e.fix });
           throw e;
         }
       });

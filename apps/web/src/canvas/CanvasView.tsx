@@ -5,6 +5,7 @@ import { useToast } from "@anim/ui";
 import { useEffect, useRef, useState } from "react";
 import { frameOf, useStudio, type Tool } from "../store";
 import { bbox, findLayer, heldIndexAt, newDrawingLayer, strokePoints } from "../store/edit";
+import { drawRig } from "./rigOverlay";
 import { overlayKey } from "../store/scenes";
 import { brushTool, eraserTool, eyedropperTool, fillTool } from "../tools/paint";
 import { dashedPath, selectTool } from "../tools/select";
@@ -147,6 +148,7 @@ export function CanvasView() {
       const b = bbox(sel.indices.flatMap((i) => (strokes[i] ? strokePoints(strokes[i]) : [])));
       if (b) dashedPath(g, ([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]] as Pt[]).map((p) => c.fromLayer(l.id, p)), c.unitsPerPx);
     }
+    drawRig(g, c, s.spec, s.selected, s.hidden);
     if (!drag.current) TOOLS[s.tool].overlay(g, c);
   };
 

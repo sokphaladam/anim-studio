@@ -1,7 +1,8 @@
 import { DockviewReact, themeDark, type DockviewApi, type DockviewReadyEvent, type IDockviewPanelProps } from "dockview-react";
 import type { FunctionComponent } from "react";
 
-const KEY = "anim-studio.layout.v2";
+// bumped when a panel is added, so saved layouts pick it up
+const KEY = "anim-studio.layout.v4";
 export const dockTheme = { ...themeDark, name: "anim", className: `${themeDark.className} anim-dock`, gap: 1 };
 
 export function defaultLayout(api: DockviewApi, title: string) {
@@ -11,6 +12,8 @@ export function defaultLayout(api: DockviewApi, title: string) {
   api.addPanel({ id: "brushes", component: "brushes", title: "Brush presets", position: { referencePanel: color, direction: "within" } });
   const layers = api.addPanel({ id: "layers", component: "layers", title: "Layers", position: { referencePanel: color, direction: "below" } });
   api.addPanel({ id: "history", component: "history", title: "History", position: { referencePanel: layers, direction: "within" } });
+  api.addPanel({ id: "parts", component: "parts", title: "Part check", position: { referencePanel: layers, direction: "within" } });
+  api.addPanel({ id: "rig", component: "rig", title: "Rig", position: { referencePanel: layers, direction: "within" } });
   layers.api.setActive();
   api.addPanel({ id: "ai", component: "ai", title: "AI assistant", position: { referencePanel: layers, direction: "below" } });
   // under the canvas only, so the dockers on the right get the full height (at 1366×768 a full-width timeline left Layers ~3 rows)

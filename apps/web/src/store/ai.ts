@@ -1,6 +1,7 @@
 import type { SceneSpec } from "@anim/spec";
 import { useStudio } from ".";
 import { requestEdit, saveProject } from "./projects";
+import { profilesOf } from "./edit";
 import { overlayKey } from "./scenes";
 
 /** Layered generation's stages, in pipeline order. */
@@ -55,7 +56,7 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
 
   let jobId: string;
   try {
-    const res = await fetch("/api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...req, duration }) });
+    const res = await fetch("/api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...req, duration, ...(fromWelcome ? {} : profilesOf(s.spec)) }) });
     const body = (await res.json().catch(() => ({}))) as { jobId?: string; error?: string };
     if (!res.ok || !body.jobId) throw new Error(body.error ?? `Server error ${res.status}`);
     jobId = body.jobId;

@@ -72,6 +72,15 @@ Acceptance criteria:
 - Every uncertain repair is explicitly marked for review; the system does not report a guessed part as verified.
 - Tests cover masks, edge cases, missing parts, profile persistence and old-project loading.
 
+**Status (November 9, 2026): implemented, except where noted.**
+
+- `SceneSpec.characters` holds Character Identity profiles: look, reference asset, palette, proportions, facing, notes and seed. A new profile is made from each new character's painting. Generating inside an open project sends its profiles. The planner is told to reuse their ids, and the painter reuses their look and seed. If the new painting's palette drifts from the saved one, the identity check is set to review. Saved profiles are never overwritten by a generation.
+- Every cut-out asset records `from`, `mask`, `crop`, `cleanup` and a `checks` checklist: cutout, edges, framing, coverage, joint, reconstruction and identity. `review` is set exactly when a check is not a pass. A blank, opaque or rectangular cut-out fails and is never stored.
+- New mask cleanup in `packages/ai/src/masks.ts`: shrink, fillHoles, despeckle, feather and cleanMask. Generation applies default speck and hole cleanup.
+- Reconstructed bodies and eye states keep their full-size fill (`*_fill`) and mask as stored assets. The reconstruction check flags fills that are large or incomplete.
+- The **Part check** docker shows the original, reconstructed, mask and cut-out stages and the checklist. Its controls re-cut a part from the original with new cleanup (`POST /api/parts/recut`, as one undoable step that keeps the part in place) and approve a flagged part. Selecting a character group shows and edits its profile.
+- Not done: painting mask corrections by hand (cleanup is numeric only), regenerating a single part, and elbow, wrist and knee reconstruction, which needs M9 limb pieces. "Skip" means deleting the layer with the existing Layers tool. The real ComfyUI pipeline and 200% zoom fringe checks have not been verified on GPU-painted art; only the fake painter has run.
+
 ### M9 — Hybrid character rigging
 
 **Goal:** Replace all-or-nothing rigid cutouts with an editable 2D rig that supports natural connected movement.
@@ -93,6 +102,29 @@ Acceptance criteria:
 - Rig edits are undoable, save with the project and survive reopen.
 - A rig with no mesh/weights falls back to the existing transform behavior.
 - Deterministic test frames match after repeated scrubbing and headless export.
+
+**Status (November 9, 2026): implemented, except where noted.**
+
+- **Bones are layers.** A new `bone` type draws nothing. Its pivot is the joint and its params are `length`, `angle` and optional `min`/`max` joint limits. Bones reuse the existing rig: parent chains for FK, transform rotation, timeline keys, undo, the Layers hierarchy and the Transform tool. An image layer parented to a bone follows it rigidly, which is the fallback.
+- **Two-bone IK** lives in `SceneSpec.ik` (`upper`, `lower`, `target`, `bend`, `mix`) and is solved inside `layerMatrix` at render time, so it is deterministic and identical in preview and export.
+  - The target is a handle layer. At the scene root it stays put while the body moves; parented to the character it travels with them.
+  - `mix` blends between IK and hand-set (FK) rotations and can be keyframed.
+  - Joint limits apply to the IK result too.
+- **Mesh deformation** is optional `layer.mesh` on image layers (`bones`, `cols`, `rows`, optional `weights`), using linear blend skinning against the bind pose (bones' own motion left out). It is drawn as affine-mapped triangles. Automatic weights fall off with distance, and parts of the image far from every listed bone stay put.
+- **Templates:** a front-facing person, with an optional hair chain, and a side-view animal, with an optional tail and ears. Bones are named `<group>_bone_<name>`. Mirroring a `_l` bone onto its `_r` twin is supported.
+- **Diagnostics** (`rigProblems`): joints off their parent bone, flipped bones, IK bending against the drawing, unweighted vertices, and meshes that fold or stretch more than 60% at sampled times.
+- **Rig docker:**
+  - On a character group: add a skeleton.
+  - On a bone: length, direction, limits, mirror and IK.
+  - On an image layer: tick the bones that bend it, and set the grid.
+  - On an IK target: choose whether it stays in the scene or moves with the character.
+  - A rig check list appears in every case.
+- **Canvas:** bones and IK targets are drawn on the overlay. The Transform tool rotates bones about their joint and drags IK targets.
+- Not done:
+  - Painting weights by hand: the data model accepts `weights`, but the UI only sets automatic weights.
+  - Picking a bone by clicking it on the canvas: select bones in Layers.
+  - Self-intersection is only checked within one mesh (folds), not between layers.
+  - Generated characters are not rigged automatically: their cut-outs have no separate limbs yet, so a person adds the skeleton.
 
 ### M10 — Face, gaze and pose system
 

@@ -1,4 +1,4 @@
-import { apply, defaultFactory, invert, layerMatrix, layerPivot, objectBounds, resolve } from "@anim/engine";
+import { apply, boneTip, defaultFactory, invert, layerMatrix, layerPivot, objectBounds, resolve } from "@anim/engine";
 import type { SceneSpec } from "@anim/spec";
 import { useStudio } from "../store";
 import { bbox, findLayer, heldIndexAt, mapLayer, setStrokes, setTransform, strokePoints, transformStroke } from "../store/edit";
@@ -7,7 +7,7 @@ import type { Ctx2D, Pt, ToolContext, ToolController } from "./types";
 
 type Target =
   | { kind: "strokes"; layer: string; frame: number; indices: number[]; box: [number, number, number, number] }
-  | { kind: "layer"; layer: string; box: [number, number, number, number]; pivot: Pt };
+  | { kind: "layer"; layer: string; box: [number, number, number, number]; pivot: Pt; point?: boolean };
 
 type Mode = "move" | "scale" | "rotate" | "pivot";
 let drag: { target: Target; mode: Mode; start: Pt; centerScene: Pt; base: SceneSpec } | null = null;
@@ -32,14 +32,30 @@ export function targetOf(spec: SceneSpec, frameNo: number): Target | null {
     if (!box) return null;
     return { kind: "layer", layer: l.id, box, pivot: layerPivot(spec, l, defaultFactory) };
   }
-  // object layers: box around what the object draws on this frame, pivot at its center
-  const time = frameNo / spec.meta.fps;
-  // a rig group draws nothing itself: its box is everything parented under it (in its own, untransformed space)
+  // a bone: a box along it, turning about its joint
+  if (l.type === "bone" && l.pivot) {
+    const [jx, jy] = l.pivot, [tx, ty] = boneTip(l);
+    const pad = Math.max(4, Math.hypot(tx - jx, ty - jy) * 0.12);
+    return { kind: "layer", layer: l.id, box: [Math.min(jx, tx) - pad, Math.min(jy, ty) - pad, Math.max(jx, tx) + pad, Math.max(jy, ty) + pad], pivot: l.pivot };
+  }
+  const box = layerBox(spec, l.id, frameNo / spec.meta.fps);
+  // an empty group (an IK target handle) is a small box around its pivot
+  // (a point: dragging it anywhere moves it; there is nothing to scale or turn)
+  if (!box) return l.type === "group" && l.pivot ? { kind: "layer", layer: l.id, box: [l.pivot[0] - 8, l.pivot[1] - 8, l.pivot[0] + 8, l.pivot[1] + 8], pivot: l.pivot, point: true } : null;
+  return { kind: "layer", layer: l.id, box, pivot: layerPivot(spec, l, defaultFactory) };
+}
+
+/**
+ * What an object layer covers at `time`, in its own coordinates. A rig group draws nothing itself: its box is everything
+ * parented under it (in its own, untransformed space).
+ */
+export function layerBox(spec: SceneSpec, id: string, time: number): [number, number, number, number] | null {
+  const l = findLayer(spec, id);
+  if (!l) return null;
   const parts = l.type === "group" ? spec.layers.filter((x) => isUnder(spec, x.id, l.id)) : [l];
   const boxes = parts.map((x) => objectBounds(spec, x, time, defaultFactory)).filter((b) => !!b);
   if (!boxes.length) return null;
-  const box: [number, number, number, number] = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
-  return { kind: "layer", layer: l.id, box, pivot: layerPivot(spec, l, defaultFactory) };
+  return [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
 }
 
 /** Whether layer `id` sits (at any depth) under rig parent `root`. */
@@ -69,7 +85,7 @@ export const transformTool: ToolController = {
     const h = handles(target, c);
     const near = (p: Pt) => Math.hypot(p[0] - c.scene[0], p[1] - c.scene[1]) < 10 * c.unitsPerPx;
     // the small pivot ring moves the pivot itself (the point the layer turns about)
-    const mode: Mode = near(h.rot) ? "rotate" : h.corners.some(near) ? "scale" : target.kind === "layer" && Math.hypot(h.center[0] - c.scene[0], h.center[1] - c.scene[1]) < 5 * c.unitsPerPx ? "pivot" : "move";
+    const mode: Mode = target.kind === "layer" && target.point ? "move" : near(h.rot) ? "rotate" : h.corners.some(near) ? "scale" : target.kind === "layer" && Math.hypot(h.center[0] - c.scene[0], h.center[1] - c.scene[1]) < 5 * c.unitsPerPx ? "pivot" : "move";
     s.beginGesture();
     drag = { target, mode, start: c.scene, centerScene: h.center, base: c.spec };
   },
@@ -108,7 +124,8 @@ export const transformTool: ToolController = {
   },
   overlay(g: Ctx2D, c) {
     const target = targetOf(c.spec, c.frame);
-    if (!target) return;
+    // a point (an IK target) is drawn by the rig overlay
+    if (!target || (target.kind === "layer" && target.point)) return;
     const h = handles(target, c);
     g.save();
     dashedPath(g, h.corners, c.unitsPerPx);

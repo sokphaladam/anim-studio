@@ -1,4 +1,4 @@
-import type { SceneSpec } from "@anim/spec";
+import type { Asset, CharacterProfile, SceneSpec } from "@anim/spec";
 import type { AnimateArgs } from "./painters/comfyui";
 
 export type Aspect = "16:9" | "9:16" | "1:1";
@@ -19,6 +19,10 @@ export interface GenerateRequest {
   prompt: string;
   duration: number;
   aspect: Aspect;
+  /** Saved character profiles to keep (and reuse when the idea brings them back), by character id. */
+  characters?: Record<string, CharacterProfile>;
+  /** The profiles' reference paintings, by asset id. */
+  assets?: Record<string, Asset>;
 }
 
 /** A clip stored as numbered JPEG frames: `${frames}001.jpg` … */

@@ -32,3 +32,21 @@ export const group = defineObject({
   params: z.object({}),
   draw() {},
 });
+
+/**
+ * Rig bone: draws nothing. Its pivot is the joint; it points `length` scene units along `angle` (radians, 0 = right,
+ * clockwise, in its own coordinates). Child bones and parts parented to it follow its rotation. `min`/`max` limit the
+ * rotation (radians, relative to how it was drawn), for hand-set keys and IK alike.
+ */
+export const bone = defineObject({
+  type: "bone",
+  category: "groups",
+  description: "A rig bone (joint at its pivot); rotate it to bend the parts and mesh attached to it.",
+  params: z.object({
+    length: z.number().positive(),
+    angle: z.number().default(0),
+    min: z.number().min(-Math.PI * 2).max(0).optional(),
+    max: z.number().min(0).max(Math.PI * 2).optional(),
+  }),
+  draw() {},
+});

@@ -74,6 +74,27 @@ try {
   check(await row("girl_head").isVisible(), "girl_head appears in the Layers docker");
   await page.screenshot({ path: `${out}/layered-editor.png` });
 
+  // Part check docker: the head's stages and checklist, a re-cut that keeps it in place, then undone
+  await row("girl_head").click();
+  await page.locator(".dv-tab", { hasText: "Part check" }).click();
+  const stages = page.getByRole("list", { name: "Stages" });
+  await stages.waitFor();
+  check((await stages.getByRole("img").count()) >= 3, "part check shows original, mask and cut-out");
+  check(await page.getByRole("list", { name: "Checks" }).getByText("edges").isVisible(), "part check lists the head's checks");
+  const part = await state(() => ({ ...window.studio.getState().spec.assets.girl_head }));
+  const grow = page.getByRole("textbox", { name: "Grow / shrink" });
+  await grow.fill("-2");
+  await grow.press("Enter");
+  await page.getByRole("button", { name: "Re-cut from original" }).click();
+  await page.waitForFunction((src) => window.studio.getState().spec.assets.girl_head.src !== src, part.src, { timeout: 15000 });
+  const recut = await state(() => window.studio.getState().spec.assets.girl_head);
+  check(recut.crop[0] > part.crop[0] && recut.cleanup.grow === -2, `re-cut shrinks the head crop (${part.crop} → ${recut.crop})`);
+  await page.screenshot({ path: `${out}/layered-part-check.png` });
+  await page.evaluate(() => window.studio.getState().undo());
+  check((await state(() => window.studio.getState().spec.assets.girl_head.src)) === part.src, "re-cut is one undoable step");
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+  check(await page.evaluate(() => !!window.studio.getState().spec.characters?.girl), "the girl's character profile is saved with the scene");
+
   // select the head: pivot fields; nudge the pivot
   await row("girl_head").click();
   const pivotX = page.getByLabel("Pivot X");
@@ -133,6 +154,48 @@ try {
   const moved = await state(() => window.studio.getState().spec.layers.find((l) => l.id === "clock").transform);
   check(!!moved, `a generated layer can be transformed (${JSON.stringify(moved)})`);
 
+  // Rig docker: a skeleton on the girl, her body bent by the arm bones, IK on the forearm, then the target dragged
+  // Layers and Rig share a tab group: pick the layer in Layers, then show Rig
+  const rigOn = async (id) => {
+    await page.locator(".dv-tab", { hasText: "Layers" }).click();
+    await row(id).click();
+    await page.locator(".dv-tab", { hasText: "Rig" }).click();
+  };
+  await rigOn("girl");
+  await page.getByRole("button", { name: "Person", exact: true }).click();
+  await page.getByRole("button", { name: "Add skeleton" }).click();
+  await page.screenshot({ path: `${out}/layered-skeleton.png` });
+  const bones = await state(() => window.studio.getState().spec.layers.filter((l) => l.type === "bone").map((l) => l.id));
+  check(bones.includes("girl_bone_lower_arm_l") && bones.includes("girl_bone_foot_r"), `a person skeleton is added (${bones.length} bones)`);
+  await rigOn("girl_body");
+  for (const b of ["girl_bone_upper_arm_l", "girl_bone_lower_arm_l"]) await page.getByRole("list", { name: "Bones" }).getByLabel(b).check();
+  check((await state(() => window.studio.getState().spec.layers.find((l) => l.id === "girl_body").mesh?.bones.length)) === 2, "the body is bent by the two arm bones");
+  await rigOn("girl_bone_lower_arm_l");
+  await page.getByRole("button", { name: "Add IK target at the end of this limb" }).click();
+  const ik = await state(() => window.studio.getState().spec.ik?.[0]);
+  check(ik?.upper === "girl_bone_upper_arm_l", `IK added on the arm (target ${ik?.target})`);
+  const still = await frame(5);
+  await page.keyboard.press("t");
+  const tgt = await state(() => {
+    const s = window.studio.getState().spec;
+    const p = s.layers.find((l) => l.id === s.ik[0].target).pivot;
+    return { x: p[0] / s.meta.width, y: p[1] / s.meta.height };
+  });
+  await page.mouse.move(canvas.x + canvas.width * tgt.x, canvas.y + canvas.height * tgt.y);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * tgt.x + 30, canvas.y + canvas.height * tgt.y - 40, { steps: 6 });
+  await page.mouse.up();
+  const bent = await frame(5);
+  const dragged = await state(() => {
+    const s = window.studio.getState();
+    const l = s.spec.layers.find((x) => x.id === s.spec.ik[0].target);
+    return JSON.stringify({ pivot: l.pivot, transform: l.transform, selected: s.selected, tool: s.tool, t: s.t });
+  });
+  check(bent !== still, `dragging the IK target bends the arm in the render (${dragged})`);
+  await page.screenshot({ path: `${out}/layered-rig.png` });
+  check(!(await page.getByRole("region", { name: "Rig check" }).count()) || (await page.getByRole("region", { name: "Rig check" }).getByLabel("error").count()) === 0, "rig check shows no errors");
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+
   // save, reopen: assets, rig and keyframes intact
   const saved = await state(async () => {
     const { saveProject } = await import("/src/store/projects.ts");
@@ -144,7 +207,9 @@ try {
   await page.waitForFunction(() => window.studio.getState().screen === "editor");
   const reopened = await state(() => window.studio.getState().spec);
   check(JSON.stringify(reopened.assets) === JSON.stringify(saved.assets), "assets survive save and reopen");
-  check(JSON.stringify(reopened.layers) === JSON.stringify(saved.layers) && JSON.stringify(reopened.tracks) === JSON.stringify(saved.tracks) && JSON.stringify(reopened.actions) === JSON.stringify(saved.actions), "rig, keyframes and actions survive save and reopen");
+  // key order isn't meaningful (the server returns schema order), so compare with sorted keys
+  const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+  check(canon([reopened.layers, reopened.tracks, reopened.actions, reopened.ik]) === canon([saved.layers, saved.tracks, saved.actions, saved.ik]), "rig (bones, mesh, IK), keyframes and actions survive save and reopen");
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/layered-reopened.png` });
 

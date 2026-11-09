@@ -274,6 +274,14 @@ export function smear(r: Raster, region: Mask, known: Mask): { r: Raster; filled
   return { r: { width: w, height: h, data }, filled };
 }
 
+/**
+ * The mask without its line art: pixels much darker than the colors they outline (anime outlines are near-black). Fills
+ * spread from what is left, so they take the part's colors instead of dragging outlines into streaks.
+ */
+export function withoutInk(r: Raster, m: Mask): Mask {
+  return m.map((v, i) => (v >= ON && 0.2126 * r.data[i * 4] + 0.7152 * r.data[i * 4 + 1] + 0.0722 * r.data[i * 4 + 2] < 70 ? 0 : v));
+}
+
 /** Square erosion by r pixels: the mask's outside grown, inverted. */
 export function shrink(m: Mask, width: number, height: number, r: number): Mask {
   const out = grow(m.map((v) => (v >= ON ? 0 : 255)), width, height, r);

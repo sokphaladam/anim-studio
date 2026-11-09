@@ -16,7 +16,7 @@ const PLAN = {
 };
 
 // colors of the synthetic paintings
-const SCLERA = [250, 250, 248], MOUTH = [170, 40, 50];
+const SCLERA = [250, 250, 248], MOUTH = [170, 40, 50], WALL = [120, 90, 160], INK = [15, 12, 20];
 const SKIN = [240, 200, 170], SHIRT = [200, 60, 110], NECK = [150, 110, 90], EYE = [20, 20, 30], CLOCK = [230, 220, 190], SKY = [30, 40, 70];
 
 function raster(w: number, h: number, at: (x: number, y: number) => number[] | null, bg = [255, 255, 255]): Raster {
@@ -28,9 +28,13 @@ const near = (d: Uint8ClampedArray, i: number, c: number[]) => Math.abs(d[i] - c
 const maskWhere = (r: Raster, pick: (i: number) => boolean) => raster(r.width, r.height, (x, y) => (pick((y * r.width + x) * 4) ? [255, 255, 255] : null), [0, 0, 0]);
 
 /** A character on white: a shirt-colored body with a round head on top, two dark eyes in it. */
-function character(w: number, h: number, face = false) {
+function character(w: number, h: number, face = false, extra: { scenery?: boolean; ink?: boolean } = {}) {
   const hx = w / 2, hy = h * 0.3, hr = h * 0.12;
   return raster(w, h, (x, y) => {
+    // a window the painter drew beside her (background removal keeps it; the segmenter doesn't call it "girl")
+    if (extra.scenery && x < w * 0.18 && y > h * 0.2 && y < h * 0.8) return WALL;
+    // an outline around the head, as anime line art has
+    if (extra.ink && Math.abs(Math.hypot(x - hx, y - hy) - hr) < 1.2) return INK;
     if (face && Math.hypot(x - hx, y - hy) < hr) {
       // eye whites with a dark iris in each, and a mouth below
       const ex = Math.abs(Math.abs(x - hx) - hr * 0.4), ey = Math.abs(y - hy);
@@ -47,7 +51,7 @@ function character(w: number, h: number, face = false) {
 
 /** In-memory PNG stand-ins: "encoding" stores the raster under a token. */
 /** missCharacter: the first `n` character paintings come back empty (the painter painted something else). */
-function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: boolean } = {}) {
+function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: boolean; scenery?: boolean; ink?: boolean; floorAt?: number } = {}) {
   let misses = opts.missCharacter ?? 0;
   const blobs = new Map<string, Raster>();
   const stored = new Map<string, Raster>();
@@ -65,7 +69,7 @@ function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: bool
       calls.push(`paint ${a.width}x${a.height}`);
       // a quarter of the asked size keeps the test fast; the pipeline works from what it gets
       const w = a.width / 4, h = a.height / 4;
-      if (a.positive.includes("solo")) return encode(misses-- > 0 ? raster(w, h, () => null) : character(w, h, opts.face));
+      if (a.positive.includes("solo")) return encode(misses-- > 0 ? raster(w, h, () => null) : character(w, h, opts.face, opts));
       if (a.positive.includes("clock")) return encode(raster(w, h, (x, y) => (Math.hypot(x - w / 2, y - h / 2) < w * 0.3 ? CLOCK : null)));
       return encode(raster(w, h, () => SKY));
     },
@@ -78,10 +82,14 @@ function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: bool
       calls.push(`segment ${text}`);
       const r = get(png);
       // a subject (the check after painting) is everything drawn; a head is skin; parts aren't in these paintings
-      if (text === "girl" || text === "clock") return encode(maskWhere(r, (i) => !near(r.data, i, [255, 255, 255])));
+      if (text === "clock") return encode(maskWhere(r, (i) => !near(r.data, i, [255, 255, 255])));
       if (text === "eyes") return encode(maskWhere(r, (i) => near(r.data, i, EYE) || near(r.data, i, SCLERA)));
       if (text === "mouth") return encode(maskWhere(r, (i) => near(r.data, i, MOUTH)));
       if (text === "eyebrows") return encode(maskWhere(r, () => false));
+      // the background's floor: everything below floorAt (when the test paints one)
+      if (["floor", "windowsill", "ground"].includes(text)) return encode(maskWhere(r, (i) => opts.floorAt !== undefined && near(r.data, i, SKY) && Math.floor(i / 4 / r.width) >= r.height * opts.floorAt));
+      // the character (not the window painted beside her)
+      if (text === "girl") return encode(maskWhere(r, (i) => !near(r.data, i, [255, 255, 255]) && !near(r.data, i, WALL)));
       if (opts.noHead) return encode(maskWhere(r, () => false));
       return encode(maskWhere(r, (i) => near(r.data, i, SKIN) || near(r.data, i, EYE) || near(r.data, i, SCLERA) || near(r.data, i, MOUTH)));
     },
@@ -511,5 +519,65 @@ describe("shot planes (M12)", () => {
     const [fx, fy] = spec.camera!.focus!;
     expect(fx).toBe(L("girl").pivot![0]);
     expect(fy).toBeLessThan(L("girl").pivot![1]);
+  });
+});
+
+describe("treehouse fixes: scenery, fills, held props, standing on the floor", () => {
+  const gen = async (opts: Parameters<typeof fakeTools>[0], plan: unknown = { ...PLAN, actions: [{ ...PLAN.actions[0], end: 6 }] }) => {
+    const f = fakeTools(opts);
+    const spec = await generateLayered({ prompt: "x", duration: 6, aspect: "16:9" }, provider([plan]), f.tools, () => {});
+    return { spec, ...f };
+  };
+
+  it("drops scenery the painter drew with a character, and says so", async () => {
+    const { spec, stored } = await gen({ scenery: true });
+    const body = stored.get(spec.assets!.girl_body.src)!;
+    let wall = 0;
+    for (let i = 0; i < body.width * body.height * 4; i += 4) if (body.data[i + 3] > 32 && near(body.data, i, WALL)) wall++;
+    expect(wall).toBe(0);
+    expect(JSON.stringify(spec.assets!.girl_body.checks)).toMatch(/Scenery|scenery/);
+  });
+
+  it("fills behind a moved head from the body's colors, not its dark outlines", async () => {
+    const { spec, stored } = await gen({ ink: true });
+    const body = stored.get(spec.assets!.girl_body.src)!;
+    const bp = spec.layers.find((l) => l.id === "girl_body")!.params as { x: number; y: number; w: number; h: number };
+    const hp = spec.layers.find((l) => l.id === "girl_head")!.params as { x: number; y: number; w: number; h: number };
+    let dark = 0, inside = 0;
+    for (let y = 0; y < body.height; y++)
+      for (let x = 0; x < body.width; x++) {
+        const i = (y * body.width + x) * 4, sx = bp.x + (x / body.width) * bp.w, sy = bp.y + (y / body.height) * bp.h;
+        // well inside where the head was (away from its outline)
+        if (body.data[i + 3] < 200 || Math.hypot(sx - (hp.x + hp.w / 2), sy - (hp.y + hp.h / 2)) > hp.w * 0.3) continue;
+        inside++;
+        if (near(body.data, i, INK)) dark++;
+      }
+    expect(inside).toBeGreaterThan(0);
+    expect(dark).toBe(0);
+  });
+
+  it("a prop where a reaching part is rides on it, and its steam goes with it", async () => {
+    const plan = {
+      ...PLAN,
+      characters: [{ ...PLAN.characters[0], pose: "sitting", parts: [{ id: "hand", find: "hand", motion: "swing", target: "clock" }] }],
+      props: [{ id: "clock", look: "wall clock", box: [0.55, 0.42, 0.65, 0.58] }],
+      ambient: [{ type: "steam", at: "clock" }],
+      actions: [],
+    };
+    const { spec } = await gen({}, plan);
+    expect(spec.layers.find((l) => l.id === "clock")!.parent).toBe("girl_hand");
+    expect(spec.layers.find((l) => l.type === "steam")!.parent).toBe("clock");
+    expect(spec.actions!.some((a) => a.type === "swing" && a.part === "girl_hand")).toBe(true);
+  });
+
+  it("sets a character's feet on the painted floor under its planned box", async () => {
+    const { spec } = await gen({ floorAt: 0.85 });
+    const feet = spec.layers.find((l) => l.id === "girl")!.pivot![1];
+    // the fake background is 1344×768 / 4 painted rows, scaled to cover the frame; the floor starts at row ⌈0.85 × 192⌉
+    const bg = spec.layers.find((l) => l.id === "balcony_background")!.params as { y: number; h: number };
+    const rows = 768 / 4, firstFloorRow = Math.ceil(rows * 0.85);
+    expect(feet).toBeCloseTo(bg.y + (firstFloorRow * bg.h) / rows, 0);
+    const none = await gen({});
+    expect(none.spec.layers.find((l) => l.id === "girl")!.pivot![1]).toBeCloseTo(0.95 * 720, 0);
   });
 });

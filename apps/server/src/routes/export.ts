@@ -8,7 +8,7 @@ import { exportMp4, PRESETS, type Preset } from "../export";
 import { startJob } from "../jobs";
 
 const Body = z.object({ spec: z.unknown(), preset: z.enum(Object.keys(PRESETS) as [Preset, ...Preset[]]), quality: z.enum(["draft", "balanced", "final"]).default("final"), fit: z.enum(["contain", "cover"]).default("contain") });
-const FILE = /^[a-z0-9-]{1,80}\.mp4$/;
+const FILE = /^[a-z0-9-]{1,80}\.(mp4|zip)$/;
 
 /** POST /api/export renders the spec it is sent (what the editor shows, saved or not) as a job; follow /api/jobs/:id/events. */
 export function exportRoutes(app: FastifyInstance, imagesDir: string, exportsDir: string) {
@@ -37,7 +37,7 @@ export function exportRoutes(app: FastifyInstance, imagesDir: string, exportsDir
     const { name } = req.params;
     const file = join(exportsDir, name);
     if (!FILE.test(name) || !existsSync(file)) return reply.code(404).send({ error: "Export not found" });
-    reply.header("content-type", "video/mp4");
+    reply.header("content-type", name.endsWith(".zip") ? "application/zip" : "video/mp4");
     if ("download" in (req.query as object)) reply.header("content-disposition", `attachment; filename="${name}"`);
     return reply.send(createReadStream(file));
   });

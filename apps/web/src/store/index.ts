@@ -42,6 +42,8 @@ export interface StudioState {
    * prefer reduced motion.
    */
   display: { quality: Quality; off: Effect[]; guides: boolean; still: boolean };
+  /** Loop preview: plays this many times through the seam, then stops (null: play as usual). */
+  loopRuns: number | null;
   selection: Selection;
   hidden: Record<string, boolean>;
   locked: Record<string, boolean>;
@@ -100,6 +102,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   autoFrame: true,
   autoKey: true,
   onion: { on: false, before: 2, after: 1, opacity: 0.35 },
+  loopRuns: null,
   display: { quality: "balanced" as Quality, off: [] as Effect[], guides: false, still: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches },
   selection: null,
   hidden: {},

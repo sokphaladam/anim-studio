@@ -12,6 +12,7 @@ import { RigDocker } from "../dockers/Rig";
 import { FaceDocker } from "../dockers/Face";
 import { MotionDocker } from "../dockers/Motion";
 import { LookDocker } from "../dockers/Look";
+import { LoopDocker } from "../dockers/Loop";
 import { LayersDocker } from "../dockers/Layers";
 import { Timeline } from "../dockers/Timeline";
 import { useStudio } from "../store";
@@ -60,13 +61,17 @@ function usePlayback() {
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      const { playing, t, loop, spec, range, set } = useStudio.getState();
+      const { playing, t, loop, spec, range, loopRuns, set } = useStudio.getState();
       if (playing && spec) {
         const fps = spec.meta.fps;
         const start = range ? range.start / fps : 0, end = range ? (range.end + 1) / fps : spec.meta.duration;
         let next = t + dt;
-        if (next >= end) next = loop ? start + ((next - start) % (end - start)) : end - 1 / fps;
-        set({ t: next, playing: loop || next < end - 1 / fps });
+        const wrapped = next >= end;
+        if (wrapped) next = loop || loopRuns ? start + ((next - start) % (end - start)) : end - 1 / fps;
+        // a loop preview counts its plays and stops after the last
+        const runs = wrapped && loopRuns ? loopRuns - 1 : loopRuns;
+        if (runs === 0) set({ t: end - 1 / fps, playing: false, loopRuns: null });
+        else set({ t: next, playing: loop || !!runs || next < end - 1 / fps, loopRuns: runs });
       }
       raf = requestAnimationFrame(tick);
     };
@@ -110,6 +115,7 @@ export function Editor() {
       face: () => <div className="h-full overflow-auto bg-panel"><FaceDocker /></div>,
       motion: () => <div className="h-full overflow-auto bg-panel"><MotionDocker /></div>,
       look: () => <div className="h-full overflow-auto bg-panel"><LookDocker /></div>,
+      loop: () => <div className="h-full overflow-auto bg-panel"><LoopDocker /></div>,
       ai: () => <div className="h-full bg-panel"><AIAssistantDocker ref={aiInput} /></div>,
     }),
     [extra],

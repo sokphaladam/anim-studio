@@ -11,13 +11,21 @@ const PRESETS = [
   { value: "draft", label: "Draft (fast)", width: 960, height: 540, fps: 24 },
 ] as const;
 type Preset = (typeof PRESETS)[number]["value"];
-type State = { phase: "idle" } | { phase: "running"; jobId?: string; frame: number; total: number } | { phase: "done"; url: string; name: string; frames: number } | { phase: "error"; message: string; fix?: string };
+type Loop = { ok: boolean; issues: { level: string; message: string }[] };
+type State =
+  | { phase: "idle" }
+  | { phase: "running"; jobId?: string; frame: number; total: number; stage?: string }
+  | { phase: "done"; url: string; name: string; frames: number; loop?: Loop }
+  | { phase: "error"; message: string; fix?: string };
 
 /** Picks a preset, renders the current scene to MP4 on the server with frame progress, then offers the file. */
 export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [preset, setPreset] = useState<Preset>("youtube");
   const [quality, setQuality] = useState<"final" | "balanced" | "draft">("final");
   const [fit, setFit] = useState<"cover" | "contain">("cover");
+  // an MP4 alone, or the package for CR Content (MP4, manifest, scene, images, loop report)
+  const [kind, setKind] = useState<"mp4" | "package">("mp4");
+  const projectId = useStudio((s) => s.projectId);
   const [st, setSt] = useState<State>({ phase: "idle" });
   const es = useRef<EventSource | null>(null);
   const meta = useStudio((s) => s.spec?.meta);
@@ -33,19 +41,19 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (!spec) return;
     setSt({ phase: "running", frame: 0, total: 0 });
     try {
-      const res = await fetch("/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset, quality, fit }) });
+      const res = await fetch(kind === "package" ? "/api/package" : "/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset, quality, fit, ...(kind === "package" && projectId ? { sceneId: projectId } : {}) }) });
       const body = (await res.json()) as { jobId?: string; error?: string };
       if (!res.ok || !body.jobId) return setSt({ phase: "error", message: body.error ?? `Export failed (${res.status})` });
       const jobId = body.jobId;
       setSt({ phase: "running", jobId, frame: 0, total: 0 });
       const src = (es.current = new EventSource(`/api/jobs/${jobId}/events`));
       src.addEventListener("progress", (e) => {
-        const d = JSON.parse((e as MessageEvent).data) as { frame: number; total: number };
-        setSt({ phase: "running", jobId, frame: d.frame, total: d.total });
+        const d = JSON.parse((e as MessageEvent).data) as { frame: number; total: number; stage?: string };
+        setSt({ phase: "running", jobId, frame: d.frame, total: d.total, stage: d.stage });
       });
       src.addEventListener("done", (e) => {
-        const d = JSON.parse((e as MessageEvent).data) as { url: string; name: string; frames: number };
-        setSt({ phase: "done", ...d });
+        const d = JSON.parse((e as MessageEvent).data) as { url: string; name: string; frames?: number; manifest?: { video: { frames: number } }; report?: Loop };
+        setSt({ phase: "done", url: d.url, name: d.name, frames: d.frames ?? d.manifest?.video.frames ?? 0, loop: d.report });
       });
       src.addEventListener("error", (e) => {
         const data = (e as MessageEvent).data as string | undefined;
@@ -102,6 +110,14 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         )
       }>
       <fieldset disabled={st.phase === "running"} className="flex flex-col gap-3">
+        <div role="radiogroup" aria-label="What to export" className="flex flex-col gap-1 text-sm text-fg-2">
+          <label className="flex items-center gap-2">
+            <input type="radio" name="kind" checked={kind === "mp4"} onChange={() => setKind("mp4")} /> MP4 video
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" name="kind" checked={kind === "package"} onChange={() => setKind("package")} /> Package for CR Content: the silent MP4 with its manifest, the scene, its images and the loop check (ZIP)
+          </label>
+        </div>
         <CardPicker
           label="Preset"
           columns={4}
@@ -150,13 +166,20 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           <div role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-1.5 overflow-hidden rounded-full bg-hover">
             <div className="h-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${pct}%` }} />
           </div>
-          <p className="font-mono text-micro text-fg-3">{st.total ? `Frame ${st.frame} of ${st.total}` : "Loading images…"}</p>
+          <p className="font-mono text-micro text-fg-3">{st.stage === "check" ? "Checking the loop…" : st.stage === "pack" ? "Packing the scene and images…" : st.total ? `Frame ${st.frame} of ${st.total}` : "Loading images…"}</p>
         </div>
       )}
       {st.phase === "done" && (
-        <p className="mt-4 truncate text-sm text-success" title={st.name} aria-live="polite">
-          Done: {st.frames} frames in {st.name}
-        </p>
+        <div className="mt-4 flex flex-col gap-1" aria-live="polite">
+          <p className="truncate text-sm text-success" title={st.name}>
+            Done: {st.frames} frames in {st.name}
+          </p>
+          {st.loop && (
+            <p className={st.loop.ok ? "text-sm text-success" : "text-sm text-warning"}>
+              {st.loop.ok ? "The loop check passed." : `The loop check found ${st.loop.issues.filter((i) => i.level === "error").length} problem(s); the manifest says so. Fix them in the Loop docker and package again.`}
+            </p>
+          )}
+        </div>
       )}
       {st.phase === "error" && (
         <div role="alert" className="mt-4 flex gap-2 text-sm">

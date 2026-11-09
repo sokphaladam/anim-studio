@@ -25,6 +25,7 @@ export { setTransformAt, switchState, switchVisibility, setSwitchKey, applyExpre
 export { applyClip, removeClip, clipsOf, motionProblems, CLIP_NAMES, CLIP_INFO, type ClipName, type ClipArgs, type ClipResult, type MotionProblem } from "./clips";
 export { bezier, easeOf } from "./tracks";
 export { depthOf, cameraMatrix, lookAt, PLANE_DEPTH, PASSES, type Effect, type Quality } from "./look";
+export { loopReport, fixLoop, type LoopReport, type LoopIssue } from "./loop";
 export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, requiredTurn, MAX_TURN, MAX_GAZE } from "./actions";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */

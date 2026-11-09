@@ -6,7 +6,7 @@ import type { Action, Asset, CharacterProfile, Layer, SceneSpec, Switch } from "
 import { z } from "zod";
 import { ASPECT_SIZE, LOOK, PAINT_SIZE, paintPrompt, type GenerateRequest } from "./generate";
 import { extractJson } from "./json";
-import { count, crop, cutout, defaultCleanup, grow, intersect, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, separateIrises, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
+import { count, crop, cutout, defaultCleanup, grow, intersect, withoutInk, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, separateIrises, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
 import type { Painter } from "./painters/comfyui";
 import { prompt } from "./prompts";
 import { AIError, type Provider } from "./types";
@@ -104,6 +104,8 @@ const NO_PEOPLE = "1girl, 1boy, person, people, human, face, animal, character";
 // the anime checkpoint draws a picture-in-a-picture or a landscape when it isn't told not to
 // the white outline: anime paintings on white often get a sticker border, which a cut-out then keeps as a halo
 const NO_FRAME = "frame, border, picture frame, framed, card, scenery, landscape, horizon, white outline, sticker, die-cut";
+// a character is painted alone: the setting it sits in is the background's job
+const NO_SET = "window, window frame, arch, door, wall, building, room, furniture, bench, chair";
 const HUMAN = /\b(1?girl|1?boy|man|woman|person|kid|child|lady|guy|human|witch|student)s?\b/i;
 /** SDXL sizes (~1 megapixel, multiples of 64); a character is painted at the one closest to its box's shape. */
 const SDXL_SIZES: [number, number][] = [[1024, 1024], [1152, 896], [896, 1152], [1216, 832], [832, 1216], [1344, 768], [768, 1344]];
@@ -124,6 +126,22 @@ const SLOT_WORDS: Record<string, [string, string]> = {
   "brows:sad": ["worried eyebrows, sad", "angry, raised eyebrows"],
   "brows:raised": ["raised eyebrows, surprised", "frown, furrowed brow"],
 };
+/**
+ * Keeps, of what background removal found, only the subject the segmenter recognises (plus a margin for hair and soft
+ * edges): painters often draw a window, a seat or a floor with a character, and that scenery must not become part of it.
+ * Returns the trimmed mask and how much scenery was dropped (0–1); the untrimmed mask if the segmenter's is too small to
+ * trust (it would cut the subject apart).
+ */
+function subjectOnly(all: Mask, found: Mask, w: number, h: number): { mask: Mask; dropped: number } {
+  const kept = intersect(all, grow(found, w, h, Math.max(3, Math.round(Math.max(w, h) * 0.015))));
+  const n = count(all), k = count(kept);
+  if (!n || k < count(found) * 0.5) return { mask: all, dropped: 0 };
+  return { mask: kept, dropped: 1 - k / n };
+}
+/** A check for scenery dropped from a cut-out: fine when little; a person should look when a lot went (or kept too much). */
+const sceneryCheck = (dropped: number): Check | null =>
+  dropped < 0.03 ? null : dropped > 0.3 ? { name: "framing", status: "review", note: `The painter drew scenery with it (${Math.round(dropped * 100)}% of the cut-out); that was removed, check nothing of it was lost` } : { name: "framing", status: "pass", note: `Scenery the painter drew around it (${Math.round(dropped * 100)}%) was removed` };
+
 /** Palette distance (0–441) past which a reused character's new painting is flagged as possibly someone else. */
 const IDENTITY_DRIFT = 60;
 const r2 = (v: number) => +v.toFixed(2);
@@ -194,10 +212,44 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const bgId = `${plan.setting}_background`;
   emit({ type: "asset", id: bgId, label: "Background", status: "running" });
   const [pw, ph] = PAINT_SIZE[req.aspect];
-  const bg = await tools.decode(await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal }));
+  const bgPng = await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal });
+  const bg = await tools.decode(bgPng);
   const k = Math.max(W / bg.width, H / bg.height); // cover the frame without stretching
   back.push({ id: bgId, type: "image", params: { asset: bgId, x: r2((W - bg.width * k) / 2), y: r2((H - bg.height * k) / 2), w: r2(bg.width * k), h: r2(bg.height * k) } });
   emit({ type: "asset", id: bgId, label: "Background", status: "done", src: save(bgId, bg, { kind: "image" }) });
+
+  // the surfaces things rest on in the background, found once when first needed (in background pixels)
+  let ground: Mask | null = null;
+  const bgAt = { x: (W - bg.width * k) / 2, y: (H - bg.height * k) / 2 };
+  /**
+   * Where something planned to rest at scene height `bottom` (x0..x1 wide, `tall` high) actually meets a surface: the
+   * median top edge of the floor, sill or ground found under it, searched from a little above its planned bottom to a
+   * little below. Null when there is no clear surface there; the planned place is kept.
+   */
+  const standOn = async (x0: number, x1: number, bottom: number, tall: number): Promise<number | null> => {
+    if (!ground) {
+      ground = new Uint8Array(bg.width * bg.height);
+      for (const what of ["floor", "windowsill", "ground"]) ground = union(ground, maskFrom(await tools.decode(await painter.segment!(bgPng, what, signal)), bg.width, bg.height));
+    }
+    const g = ground, bw = bg.width, bh = bg.height;
+    const py = (y: number) => Math.round((y - bgAt.y) / k);
+    const from = Math.max(1, py(bottom - tall * 0.3)), to = Math.min(bh - 1, py(bottom + H * 0.15));
+    const edges: number[] = [];
+    let cols = 0;
+    for (let sx = x0; sx <= x1; sx += Math.max(1, (x1 - x0) / 40)) {
+      const x = Math.round((sx - bgAt.x) / k);
+      if (x < 0 || x >= bw) continue;
+      cols++;
+      for (let y = from; y <= to; y++)
+        if (g[y * bw + x] >= 128 && g[(y - 1) * bw + x] < 128) {
+          edges.push(y);
+          break;
+        }
+    }
+    if (!cols || edges.length < cols * 0.3) return null;
+    edges.sort((a, b) => a - b);
+    return r2(bgAt.y + edges[edges.length >> 1] * k);
+  };
 
   /**
    * Paints a picture and checks that what was asked for is in it (SAM finds `noun`); a miss is repainted once with
@@ -208,7 +260,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       const used = base + 7919 * attempt;
       const png = await painter.paint({ ...args, seed: used, signal });
       const img = await tools.decode(png);
-      if (count(maskFrom(await tools.decode(await painter.segment!(png, noun, signal)), img.width, img.height)) >= img.width * img.height * 0.005) return { png, img, seed: used };
+      const found = maskFrom(await tools.decode(await painter.segment!(png, noun, signal)), img.width, img.height);
+      if (count(found) >= img.width * img.height * 0.005) return { png, img, seed: used, found };
       if (attempt) throw new AIError(`The painter didn't paint a ${noun} (tried twice)`, "Try again, or describe it more simply.");
     }
   };
@@ -257,11 +310,11 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     const pose = walks ? `${c.pose.replace(/[^,]*(sleep|lying|lies|asleep|nap|curled|sitting|eyes closed)[^,]*,?/gi, "")}, walking, side view, facing right` : c.pose;
     // animals need "no humans" or the checkpoint draws a girl
     const human = HUMAN.test(`${c.id} ${look}`);
-    const { png: srcPng, img: src, seed: paintedWith } = await paintChecked(
+    const { png: srcPng, img: src, seed: paintedWith, found: who } = await paintChecked(
       label(c.id),
       {
         positive: paintPrompt(`${human ? "solo" : "no humans, animal focus, solo"}, ${look}, ${pose}, full body, centered, ${WHITE_BG}${light}`),
-        negative: `${LOOK.negative}, ${human ? "multiple people" : "1girl, 1boy, human"}, cropped, out of frame, ${NO_FRAME}`,
+        negative: `${LOOK.negative}, ${human ? "multiple people" : "1girl, 1boy, human"}, cropped, out of frame, ${NO_FRAME}, ${NO_SET}`,
         width: cw,
         height: ch,
       },
@@ -274,7 +327,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     const eyesOf = async () => (eyesMask ??= await maskOf("eyes"));
 
     stage("segment", `Separating the ${label(c.id)}'s parts`);
-    const all = maskFrom(await tools.decode(await painter.removeBackground!(srcPng, signal)), sw, sh);
+    const trimmed = subjectOnly(maskFrom(await tools.decode(await painter.removeBackground!(srcPng, signal)), sw, sh), who, sw, sh);
+    const all = trimmed.mask;
     if (count(all) < sw * sh * 0.01) throw new AIError(`Couldn't find the ${label(c.id)} in their painting`, "Try again: a new painting usually separates cleanly.");
     save(`${c.id}_mask`, maskImage(all, sw, sh), { kind: "mask", from: `${c.id}_source` });
     // pieces cut off the body, head first; each later piece excludes the earlier ones
@@ -289,8 +343,9 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     for (const p of parts) {
       const m = intersect(await maskOf(p.find), rest);
       // a part that can't be found is left on the body; the rest of the rig still works
-      if (count(m) < 50) {
-        emit({ type: "asset", id: `${c.id}_${p.id}`, label: label(`${c.id}_${p.id}`), status: "skipped", message: `Couldn't find "${p.find}"; it stays still on the body` });
+      // a sliver (a cuff when the arm was asked for) can't move without tearing away from the body: it stays on it
+      if (count(m) < Math.max(50, count(rest) * 0.02)) {
+        emit({ type: "asset", id: `${c.id}_${p.id}`, label: label(`${c.id}_${p.id}`), status: "skipped", message: `Couldn't separate a whole "${p.find}" (only a sliver of it was found); it stays still on the body` });
         continue;
       }
       pieces.push({ id: `${c.id}_${p.id}`, mask: m, motion: p.motion, target: p.target });
@@ -308,7 +363,17 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       const reach = Math.max(4, Math.round(Math.min(pb[2] - pb[0], pb[3] - pb[1]) * 0.25));
       joints.set(p.id, neckPoint(p.mask, rest, sw, sh, reach));
       const band = intersect(p.mask, grow(rest, sw, sh, reach));
-      const s = smear(bodyR, band, body);
+      // fill from colors, not from the dark outline strokes around them (those smear into streaks); what colors alone
+      // can't reach is filled from everything
+      // the outline between the body and the part is passed through but not copied (and kept as drawn)
+      const clean = withoutInk(bodyR, body);
+      const across = union(band, intersect(subtract(body, clean), grow(band, sw, sh, 4)));
+      const spread = smear(bodyR, across, clean);
+      const got = intersect(band, spread.filled);
+      const first = { r: paste(bodyR, spread.r, got), filled: got };
+      const rest_ = subtract(band, first.filled);
+      const second = count(rest_) ? smear(first.r, rest_, union(body, first.filled)) : null;
+      const s = { r: second ? second.r : first.r, filled: second ? union(first.filled, second.filled) : first.filled };
       hidden += count(band);
       filled += count(s.filled);
       bodyR = s.r;
@@ -401,7 +466,10 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     stage("rig", `Rigging the ${label(c.id)}`);
     const cb = maskBox(all, sw)!;
     const s = Math.min(boxW / (cb[2] - cb[0]), boxH / (cb[3] - cb[1]));
-    const ox = c.box[0] * W + (boxW - (cb[2] - cb[0]) * s) / 2 - cb[0] * s, oy = c.box[3] * H - cb[3] * s;
+    // feet on the painted floor, sill or ground under the planned box, when one is there (the planner can't see the
+    // painting, so its boxes float or sink a little)
+    const floor = await standOn(c.box[0] * W, c.box[2] * W, c.box[3] * H, boxH);
+    const ox = c.box[0] * W + (boxW - (cb[2] - cb[0]) * s) / 2 - cb[0] * s, oy = (floor ?? c.box[3] * H) - cb[3] * s;
     const at = (x: number, y: number): [number, number] => [r2(ox + x * s), r2(oy + y * s)];
     const feet = at((cb[0] + cb[2]) / 2, cb[3]);
 
@@ -429,7 +497,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     // a soft shadow under the feet keeps the character standing on the ground as it moves
     cast.push({ id: c.id, type: "group", params: {}, pivot: feet, shadow: { amount: 0.45, size: 1 } });
     // breathing grows the body from where it rests
-    cast.push(place(`${c.id}_body`, bodyR, body, s, at, { parent: c.id, pivot: feet, from: `${c.id}_body_fill`, mask: `${c.id}_body_mask`, checks: [reconstruction, identity] }));
+    cast.push(place(`${c.id}_body`, bodyR, body, s, at, { parent: c.id, pivot: feet, from: `${c.id}_body_fill`, mask: `${c.id}_body_mask`, checks: [reconstruction, identity, ...(sceneryCheck(trimmed.dropped) ? [sceneryCheck(trimmed.dropped)!] : [])] }));
     for (const p of pieces) {
       const joint = joints.get(p.id);
       const pb = maskBox(p.mask, sw)!;
@@ -456,8 +524,9 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     stage("props", `Painting the ${label(p.id)}`);
     emit({ type: "asset", id: p.id, label: label(p.id), status: "running" });
     try {
-      const { png, img: src } = await paintChecked(label(p.id), { positive: paintPrompt(`no humans, ${p.look}, single object, centered, ${LIGHT_THING.test(p.look) ? GREY_BG : WHITE_BG}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${NO_FRAME}`, width: 1024, height: 1024 });
-      const m = maskFrom(await tools.decode(await painter.removeBackground!(png, signal)), src.width, src.height);
+      const { png, img: src, found } = await paintChecked(label(p.id), { positive: paintPrompt(`no humans, ${p.look}, single object, centered, ${LIGHT_THING.test(p.look) ? GREY_BG : WHITE_BG}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${NO_FRAME}`, width: 1024, height: 1024 });
+      const trimmed = subjectOnly(maskFrom(await tools.decode(await painter.removeBackground!(png, signal)), src.width, src.height), found, src.width, src.height);
+      const m = trimmed.mask;
       const b = maskBox(m, src.width);
       if (!b) throw new AIError(`The ${label(p.id)} didn't separate cleanly: the mask is empty`, "Try again.");
       save(`${p.id}_source`, src, { kind: "source" });
@@ -469,7 +538,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       const w = (b[2] - b[0]) * s, h = (b[3] - b[1]) * s;
       // swaying things rock about where they hang or stand: the top for hanging things, otherwise the bottom
       const pivot: [number, number] = [r2(x0 + w / 2), r2(/hang|lantern|chime|lamp/i.test(p.look) ? y0 : y0 + h)];
-      const layer = place(p.id, src, m, s, at, { from: `${p.id}_source`, mask: `${p.id}_mask`, ...(p.motion === "sway" ? { pivot } : {}) });
+      const scenery = sceneryCheck(trimmed.dropped);
+      const layer = place(p.id, src, m, s, at, { from: `${p.id}_source`, mask: `${p.id}_mask`, ...(p.motion === "sway" ? { pivot } : {}), ...(scenery ? { checks: [scenery] } : {}) });
       (p.front ? front : p.motion === "drift" ? sky : behind).push(layer);
       propBoxes.set(p.id, [x0, y0, x0 + w, y0 + h]);
       if (p.motion !== "none") actions.push({ id: `${p.id}_${p.motion === "sway" ? "sways" : "drifts"}`, type: p.motion, part: p.id, start: 0, ease: "inOut", amount: 1 });
@@ -480,6 +550,26 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     }
   }
 
+  // a prop where a reaching part is (a mug in the hand that lifts it) is held: it rides on that part
+  const box = (l: Layer): [number, number, number, number] | null => {
+    const q = l.params as { x?: unknown; y?: unknown; w?: unknown; h?: unknown };
+    return [q.x ?? 0, q.y ?? 0, q.w, q.h].every((v) => typeof v === "number") ? [q.x as number, q.y as number, (q.x as number) + (q.w as number), (q.y as number) + (q.h as number)] : null;
+  };
+  for (const prop of [...behind, ...front]) {
+    const pb = box(prop);
+    if (!pb || prop.parent !== undefined) continue;
+    for (const a of actions.filter((x) => x.type === "swing")) {
+      const part = cast.find((l) => l.id === a.part), qb = part && box(part);
+      if (!qb) continue;
+      const ix = Math.max(0, Math.min(pb[2], qb[2]) - Math.max(pb[0], qb[0])), iy = Math.max(0, Math.min(pb[3], qb[3]) - Math.max(pb[1], qb[1]));
+      if (ix * iy < (pb[2] - pb[0]) * (pb[3] - pb[1]) * 0.2) continue;
+      prop.parent = a.part;
+      // a held thing doesn't sway on its own
+      for (let i = actions.length - 1; i >= 0; i--) if (actions[i].part === prop.id && actions[i].type !== "swing") actions.splice(i, 1);
+      break;
+    }
+  }
+
   // ambient effects: drawn by the engine, looping with the scene
   for (const a of plan.ambient) {
     const period = fitPeriod(AMBIENT_PERIOD[a.type], duration);
@@ -487,7 +577,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     const id = (n: number = 1): string => (fx.concat(sky).some((l) => l.id === `${a.type}-${n}`) ? id(n + 1) : `${a.type}-${n}`);
     if (a.type === "steam") {
       const b = propBoxes.get(a.at!);
-      if (b) fx.push({ id: id(), type: "steam", params: { x: r2((b[0] + b[2]) / 2), y: r2(b[1] + (b[3] - b[1]) * 0.1), height: r2(Math.max(60, (b[3] - b[1]) * 1.6)), width: r2(Math.max(8, (b[2] - b[0]) * 0.18)), period } });
+      // the steam rides on its cup, so it rises from it wherever the cup is carried
+      if (b) fx.push({ id: id(), type: "steam", parent: a.at, params: { x: r2((b[0] + b[2]) / 2), y: r2(b[1] + (b[3] - b[1]) * 0.1), height: r2(Math.max(60, (b[3] - b[1]) * 1.6)), width: r2(Math.max(8, (b[2] - b[0]) * 0.18)), period } });
     } else if (a.type === "stars") sky.unshift({ id: id(), type: "stars", params: { x0, y0, x1, y1, period } });
     else if (a.type === "birds") sky.push({ id: id(), type: "birds", params: { y0, y1, period } });
     else if (a.type === "falling-leaves") fx.push({ id: id(), type: "falling-leaves", params: { x0, y0, x1, y1, period } });

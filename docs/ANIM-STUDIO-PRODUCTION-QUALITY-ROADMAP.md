@@ -297,6 +297,29 @@ Acceptance criteria:
 - The loop can play three times without a visible jump at the boundary for the validated test scenes.
 - Package validation rejects missing assets, path traversal, unsupported schema versions and mismatched checksums.
 
+**Status (November 9, 2026): implemented.**
+
+- **`loopReport`** compares the scene at its end (t = duration, the frame after the last) with t = 0. It covers:
+  - each layer relative to its parent (so a moving character is reported once), including speed hitches;
+  - every used track;
+  - one-shot actions (a look_at holding its pose, a carried cup);
+  - switches, the camera and the look;
+  - with rendering, the whole frame across the seam against a usual frame-to-frame change, plus each drawing layer alone (catching particles whose cycle doesn't fit the scene).
+  
+  Issues name the layer, track or action and the time. **`fixLoop`** repairs the usual causes as one undoable step: one-shots turn back before the end, keyed values come back to their start, switches return to their first option.
+- **Loop docker:** the check, clickable issues (select and jump), the fix, and "Play 3 loops" (playback runs through the seam three times, then stops).
+- **Package** (`POST /api/package`, or the export dialog's "Package for CR Content"):
+  - a stored ZIP holding `manifest.json` (the contract schema in `@anim/spec`: `PackageManifestSchema`), `animation.mp4` (silent H.264, yuv420p, tagged BT.709), the portable `scene.spec.json` (every image path rewritten to `assets/…`), all images (cut-outs, sources, masks, references, footage frames), and `quality-report.json`;
+  - video facts in the manifest are read from the rendered file, and every file has a SHA-256 and size;
+  - built in a staging folder and renamed into place only when complete, so a failed or cancelled build leaves nothing and never touches an earlier package.
+- **Check and import** (`POST /api/package/check`, `/api/package/import`) refuse:
+  - unsafe paths, a newer schema version, missing, unlisted or modified files;
+  - scene paths outside the package;
+  - a video whose codec, size, fps or frame count differs from the manifest, or one with audio.
+  
+  Import re-stores the images in the local library under re-derived content-hash names. The test imports a package on a second app with an empty library, and the project renders like the MP4.
+- Contract notes for CR Content: loop on `video.duration` (frames / fps); `video.loopValidated` says whether the loop check passed (packages are produced either way, and the report says why); validate the MP4 with ffprobe as well.
+
 ## 5. Shared Anim Studio → CR Content package contract
 
 Use one documented interchange contract for both repositories. The first integration should favor a complete rendered MP4 plus manifest; a portable editable scene package is included for future revisions.

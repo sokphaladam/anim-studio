@@ -35,7 +35,7 @@ function loadFonts() {
 }
 
 /** Loads every image the scene uses from the images folder; a src outside it, or a missing file, is an error naming it. */
-async function loadImages(spec: SceneSpec, imagesDir: string) {
+export async function loadImages(spec: SceneSpec, imagesDir: string) {
   for (const src of imageSources(spec)) {
     const file = resolve(imagesDir, src.replace(/^\/api\/images\//, ""));
     const rel = relative(imagesDir, file);
@@ -61,7 +61,7 @@ export async function exportMp4(spec: SceneSpec, preset: Preset, imagesDir: stri
   const r = createRenderer(canvas, spec, { createCanvas: (w, h) => createCanvas(w, h) });
   const total = frameCount(spec.meta.duration, fps);
   const tmp = `${file}.part`;
-  const enc = spawn(ffmpegBin, ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${width}x${height}`, "-r", String(fps), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", "-f", "mp4", tmp], { stdio: ["pipe", "ignore", "pipe"] });
+  const enc = spawn(ffmpegBin, ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${width}x${height}`, "-r", String(fps), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-crf", "18", "-movflags", "+faststart", "-f", "mp4", tmp], { stdio: ["pipe", "ignore", "pipe"] });
   let err = "";
   enc.stderr.on("data", (d: Buffer) => (err = (err + d).slice(-500)));
   const closed = new Promise<number | null>((ok) => enc.on("close", ok));

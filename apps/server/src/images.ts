@@ -41,6 +41,8 @@ export function imageStore(dir: string) {
     return `/api/images/${name}`;
   };
   return {
+    /** Stores PNG bytes under their content hash; resolves with the src scenes use. */
+    save,
     /** What layered generation needs: the painter, this store and a PNG codec. */
     layeredWith(painter: Painter): LayeredTools {
       return { painter, store: save, decode, encode };

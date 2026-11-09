@@ -303,6 +303,25 @@ try {
   await effectsGroup.getByRole("button", { name: "Guides" }).click();
   await page.locator(".dv-tab", { hasText: "Layers" }).click();
 
+  // Loop docker: the check names what jumps at the seam, one step fixes it, and the loop plays three times
+  await page.locator(".dv-tab", { hasText: /^Loop$/ }).click();
+  await page.getByRole("button", { name: "Check the loop" }).click();
+  const loopStatus = page.getByRole("region", { name: "Loop report" }).getByRole("status").first();
+  await loopStatus.waitFor({ timeout: 60000 });
+  check(/doesn't loop yet/.test(await loopStatus.innerText()), `the loop check finds what jumps (${await loopStatus.innerText()})`);
+  const stepsBeforeFix = await state(() => window.studio.getState().past.length);
+  await page.getByRole("button", { name: /Fix what can be fixed/ }).click();
+  await page.waitForFunction(() => /loops: nothing jumps|problem/.test(document.querySelector('[aria-label="Loop report"] [role="status"]')?.textContent ?? ""), null, { timeout: 60000 });
+  const afterFix = await loopStatus.innerText();
+  check(/It loops/.test(afterFix), `after the fix it loops (${afterFix}${/It loops/.test(afterFix) ? "" : `: ${await page.getByRole("region", { name: "Loop report" }).innerText()}`})`);
+  check((await state(() => window.studio.getState().past.length)) === stepsBeforeFix + 1, "the fix is one undo step");
+  await page.screenshot({ path: `${out}/layered-loop.png` });
+  await page.getByRole("button", { name: "Play 3 loops" }).click();
+  await page.waitForFunction(() => window.studio.getState().loopRuns === 2, null, { timeout: 30000 });
+  check(await state(() => window.studio.getState().playing), "the loop preview plays on through the seam, counting the plays");
+  await page.evaluate(() => window.studio.getState().set({ playing: false, loopRuns: null, t: 0 }));
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+
   // save, reopen: assets, rig and keyframes intact
   const saved = await state(async () => {
     const { saveProject } = await import("/src/store/projects.ts");
@@ -338,6 +357,18 @@ try {
   const mp4 = await res.body();
   check(res.ok() && res.headers()["content-type"] === "video/mp4" && mp4.subarray(4, 8).toString() === "ftyp", `the download is an MP4 (${mp4.length} bytes)`);
   await page.screenshot({ path: `${out}/export-done.png` });
+
+  // package for CR Content from the export dialog: a ZIP with a manifest that says the loop was checked
+  await page.getByRole("button", { name: "Export another" }).click();
+  await dialog.getByRole("radio", { name: /Package for CR Content/ }).check();
+  await dialog.getByRole("button", { name: "Export" }).click();
+  const pkgLink = dialog.getByRole("link", { name: "Download" });
+  await pkgLink.waitFor({ timeout: 180000 });
+  check(await dialog.getByText("The loop check passed.").isVisible(), "the package's loop check passed");
+  const zipRes = await page.request.get(`${BASE}${await pkgLink.getAttribute("href")}`);
+  const zipBody = await zipRes.body();
+  check(zipRes.ok() && zipRes.headers()["content-type"] === "application/zip" && zipBody.subarray(0, 4).toString("hex") === "504b0304" && zipBody.includes("manifest.json"), `the package downloads as a ZIP with a manifest (${zipBody.length} bytes)`);
+  await page.screenshot({ path: `${out}/export-package.png` });
   check(!errors.length, errors.length ? `page errors:\n${errors.join("\n")}` : "no page errors");
 } finally {
   await browser?.close();

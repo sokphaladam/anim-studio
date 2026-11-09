@@ -8,6 +8,7 @@ import { exportRoutes } from "./routes/export";
 import { generateRoutes } from "./routes/generate";
 import { healthRoutes } from "./routes/health";
 import { projectRoutes } from "./routes/projects";
+import { packageRoutes } from "./routes/package";
 
 const DATA = fileURLToPath(new URL("../../../data/", import.meta.url));
 
@@ -28,7 +29,9 @@ export function buildApp(opts: { config?: AIConfig; provider?: Provider; painter
   generateRoutes(app, provider, images.animateWith(painter), (src) => images.read(src), layered);
   images.routes(app, provider);
   projectRoutes(app, store, provider);
-  exportRoutes(app, imagesDir, process.env.EXPORTS_DIR || join(dirname(dbPath), "exports"));
+  const exportsDir = process.env.EXPORTS_DIR || join(dirname(dbPath), "exports");
+  exportRoutes(app, imagesDir, exportsDir);
+  packageRoutes(app, store, imagesDir, exportsDir, images.save);
   healthRoutes(app, config, painterCfg, opts.painter);
   app.addHook("onClose", async () => store.close());
   return app;

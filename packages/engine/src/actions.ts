@@ -35,6 +35,33 @@ const center = (b: Box): [number, number] => [(b[0] + b[2]) / 2, (b[1] + b[3]) /
  * Throws when the part or target can't be resolved: a direction is never invented.
  */
 function turnToward(spec: SceneSpec, a: Action, t: number, max: number, make: CanvasFactory): number {
+  const { pb, tx, ty, px, py, tr } = aim(spec, a, t, make);
+  const [hx, hy] = center(pb);
+  // the part points from its pivot through its middle; a pivot near the middle says nothing, so it points up (a head)
+  const near = Math.hypot(hx - px, hy - py) < Math.max(pb[2] - pb[0], pb[3] - pb[1]) * 0.15;
+  const from = (near ? -Math.PI / 2 : Math.atan2(hy - py, hx - px)) + tr.rotation;
+  const to = Math.atan2(ty - (py + tr.y), tx - (px + tr.x));
+  const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return Math.max(-max, Math.min(max, delta));
+}
+
+/** How far (radians) a look_at would have to turn its part to face its target, before the safe-turn clamp. */
+export const requiredTurn = (spec: SceneSpec, a: Action, make: CanvasFactory = defaultFactory) => turnToward(spec, a, a.start, Infinity, make);
+
+/** Largest gaze shift, as a share of the iris layer's width: irises stay inside the eyes. */
+export const MAX_GAZE = 0.08;
+
+/** The x/y offset a gaze slides its irises by: toward the target, MAX_GAZE × width × amount at most. */
+function gazeShift(spec: SceneSpec, a: Action, make: CanvasFactory): [number, number] {
+  const { pb, tx, ty, tr } = aim(spec, a, a.start, make);
+  const [hx, hy] = center(pb);
+  const dx = tx - (hx + tr.x), dy = ty - (hy + tr.y), n = Math.hypot(dx, dy) || 1;
+  const reach = MAX_GAZE * (pb[2] - pb[0]) * Math.min(1, a.amount);
+  return [(dx / n) * reach, (dy / n) * reach];
+}
+
+/** The part's box, its pivot and transform, and the target's center in the part's parent space, at time t. */
+function aim(spec: SceneSpec, a: Action, t: number, make: CanvasFactory) {
   const part = spec.layers.find((l) => l.id === a.part);
   const target = spec.layers.find((l) => l.id === a.target);
   if (!part || !target) throw new Error(`${a.type} "${a.id}": unknown ${part ? "target" : "part"} layer "${part ? a.target : a.part}"`);
@@ -45,11 +72,7 @@ function turnToward(spec: SceneSpec, a: Action, t: number, max: number, make: Ca
   const [tx, ty] = apply(invert(layerMatrix(spec, parent, t, make)), ...apply(layerMatrix(spec, target, t, make), ...center(tb)));
   const tr = resolve({ x: 0, y: 0, rotation: 0, ...part.transform }, spec, t);
   const [px, py] = layerPivot(spec, part, make);
-  const [hx, hy] = center(pb);
-  const from = Math.atan2(hy - py, hx - px) + tr.rotation;
-  const to = Math.atan2(ty - (py + tr.y), tx - (px + tr.x));
-  const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
-  return Math.max(-max, Math.min(max, delta));
+  return { pb, tx, ty, px, py, tr };
 }
 
 /** A loop's period, rounded so a whole number of cycles fits the scene and the video loops seamlessly. */
@@ -57,8 +80,12 @@ export const fitPeriod = (period: number, duration: number) => duration / Math.m
 
 /** The rotation offsets of a look_at: rest until start, turned by end, held (or until hold, then back). */
 export function lookAtKeys(spec: SceneSpec, a: Action, make: CanvasFactory = defaultFactory): Keys {
+  return holdKeys(spec, a, turnToward(spec, a, a.start, MAX_TURN * a.amount, make));
+}
+
+/** Rest until start, `turned` by end, held (or until hold, then back): the shape of look_at and gaze. */
+function holdKeys(spec: SceneSpec, a: Action, turned: number): Keys {
   const end = a.end ?? spec.meta.duration;
-  const turned = turnToward(spec, a, a.start, MAX_TURN * a.amount, make);
   const keys: Keys = [[0, 0], [a.start, 0], [end, turned]];
   if (a.hold !== undefined && a.hold < spec.meta.duration) keys.push([a.hold, turned], [Math.min(spec.meta.duration, a.hold + (end - a.start)), 0]);
   return a.start > 0 ? keys : keys.slice(1);
@@ -120,6 +147,10 @@ export function actionTracks(spec: SceneSpec, a: Action, make: CanvasFactory = d
     case "blink":
       // eyes shut for a fifth of a second (a slow blink for amount > 1), once per cycle
       return { opacity: loop(a.period ?? 4, (p) => { const c = Math.min(p / 3, 0.2 * k); return [[0, 0], [p - c - 0.08, 0], [p - c, 1], [p - 0.08, 1], [p, 0]]; }, "linear") };
+    case "gaze": {
+      const [dx, dy] = gazeShift(spec, a, make);
+      return { x: { keys: holdKeys(spec, a, dx), ease: a.ease }, y: { keys: holdKeys(spec, a, dy), ease: a.ease } };
+    }
     case "swing": {
       const r = turnToward(spec, a, 0, MAX_SWING * Math.min(1, k), make);
       // reach, hold a moment (a sip), come back, rest

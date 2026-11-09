@@ -16,6 +16,7 @@ const PLAN = {
 };
 
 // colors of the synthetic paintings
+const SCLERA = [250, 250, 248], MOUTH = [170, 40, 50];
 const SKIN = [240, 200, 170], SHIRT = [200, 60, 110], NECK = [150, 110, 90], EYE = [20, 20, 30], CLOCK = [230, 220, 190], SKY = [30, 40, 70];
 
 function raster(w: number, h: number, at: (x: number, y: number) => number[] | null, bg = [255, 255, 255]): Raster {
@@ -27,9 +28,16 @@ const near = (d: Uint8ClampedArray, i: number, c: number[]) => Math.abs(d[i] - c
 const maskWhere = (r: Raster, pick: (i: number) => boolean) => raster(r.width, r.height, (x, y) => (pick((y * r.width + x) * 4) ? [255, 255, 255] : null), [0, 0, 0]);
 
 /** A character on white: a shirt-colored body with a round head on top, two dark eyes in it. */
-function character(w: number, h: number) {
+function character(w: number, h: number, face = false) {
   const hx = w / 2, hy = h * 0.3, hr = h * 0.12;
   return raster(w, h, (x, y) => {
+    if (face && Math.hypot(x - hx, y - hy) < hr) {
+      // eye whites with a dark iris in each, and a mouth below
+      const ex = Math.abs(Math.abs(x - hx) - hr * 0.4), ey = Math.abs(y - hy);
+      if (ex < hr * 0.25 && ey < hr * 0.16) return ex < hr * 0.09 && ey < hr * 0.1 ? EYE : SCLERA;
+      if (Math.abs(x - hx) < hr * 0.3 && Math.abs(y - (hy + hr * 0.5)) < hr * 0.06) return MOUTH;
+      return SKIN;
+    }
     if (Math.hypot(x - hx, y - hy) < hr) return Math.abs(y - hy) < hr * 0.12 && Math.abs(Math.abs(x - hx) - hr * 0.4) < hr * 0.15 ? EYE : SKIN;
     // a rounded torso under the head (a real cut-out never fills its box)
     if (y >= hy + hr * 0.8 && ((x - w / 2) / (w * 0.22)) ** 2 + ((y - h * 0.62) / (h * 0.28)) ** 2 < 1) return SHIRT;
@@ -39,7 +47,7 @@ function character(w: number, h: number) {
 
 /** In-memory PNG stand-ins: "encoding" stores the raster under a token. */
 /** missCharacter: the first `n` character paintings come back empty (the painter painted something else). */
-function fakeTools(opts: { noHead?: boolean; missCharacter?: number } = {}) {
+function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: boolean } = {}) {
   let misses = opts.missCharacter ?? 0;
   const blobs = new Map<string, Raster>();
   const stored = new Map<string, Raster>();
@@ -57,7 +65,7 @@ function fakeTools(opts: { noHead?: boolean; missCharacter?: number } = {}) {
       calls.push(`paint ${a.width}x${a.height}`);
       // a quarter of the asked size keeps the test fast; the pipeline works from what it gets
       const w = a.width / 4, h = a.height / 4;
-      if (a.positive.includes("solo")) return encode(misses-- > 0 ? raster(w, h, () => null) : character(w, h));
+      if (a.positive.includes("solo")) return encode(misses-- > 0 ? raster(w, h, () => null) : character(w, h, opts.face));
       if (a.positive.includes("clock")) return encode(raster(w, h, (x, y) => (Math.hypot(x - w / 2, y - h / 2) < w * 0.3 ? CLOCK : null)));
       return encode(raster(w, h, () => SKY));
     },
@@ -71,9 +79,11 @@ function fakeTools(opts: { noHead?: boolean; missCharacter?: number } = {}) {
       const r = get(png);
       // a subject (the check after painting) is everything drawn; a head is skin; parts aren't in these paintings
       if (text === "girl" || text === "clock") return encode(maskWhere(r, (i) => !near(r.data, i, [255, 255, 255])));
-      if (text === "eyes") return encode(maskWhere(r, (i) => near(r.data, i, EYE)));
+      if (text === "eyes") return encode(maskWhere(r, (i) => near(r.data, i, EYE) || near(r.data, i, SCLERA)));
+      if (text === "mouth") return encode(maskWhere(r, (i) => near(r.data, i, MOUTH)));
+      if (text === "eyebrows") return encode(maskWhere(r, () => false));
       if (opts.noHead) return encode(maskWhere(r, () => false));
-      return encode(maskWhere(r, (i) => near(r.data, i, SKIN) || near(r.data, i, EYE)));
+      return encode(maskWhere(r, (i) => near(r.data, i, SKIN) || near(r.data, i, EYE) || near(r.data, i, SCLERA) || near(r.data, i, MOUTH)));
     },
     async inpaint(a) {
       calls.push(`inpaint ${a.denoise}`);
@@ -434,5 +444,58 @@ describe("mask cleanup and recut", () => {
     expect(palette(r)).toEqual(["#c83c6e", "#f0c8aa"]);
     expect(paletteDrift(["#c83c6e"], palette(r))).toBe(0);
     expect(paletteDrift(["#00ff00"], palette(r))).toBeGreaterThan(60);
+  });
+});
+
+describe("faces, gaze and turns (M10)", () => {
+  const facePlan = {
+    ...PLAN,
+    characters: [{ ...PLAN.characters[0], pose: "sitting", expressions: ["happy", "sad"] }],
+    actions: [
+      { type: "look_at", who: "girl", target: "clock", start: 3, end: 5 },
+      { type: "expression", who: "girl", expression: "happy", start: 4 },
+    ],
+  };
+  const gen = async () => {
+    const f = fakeTools({ face: true });
+    const events: LayeredEvent[] = [];
+    const spec = await generateLayered({ prompt: "she smiles at the clock", duration: 6, aspect: "16:9" }, provider([facePlan]), f.tools, (e) => events.push(e));
+    return { spec, events, ...f };
+  };
+
+  it("lifts the irises out of the eye whites and has the eyes lead the head turn", async () => {
+    const { spec, stored } = await gen();
+    const irises = spec.layers.find((l) => l.id === "girl_irises")!;
+    expect(irises.parent).toBe("girl_head");
+    expect(spec.assets!.girl_head.from).toBe("girl_head_fill");
+    // the head picture no longer has iris pixels: they were filled with eye white
+    const head = stored.get(spec.assets!.girl_head.src)!;
+    let dark = 0;
+    for (let i = 0; i < head.width * head.height * 4; i += 4) if (head.data[i + 3] > 200 && near(head.data, i, EYE)) dark++;
+    expect(dark).toBe(0);
+    const gaze = spec.actions!.find((a) => a.type === "gaze")!;
+    expect(gaze).toMatchObject({ part: "girl_irises", target: "clock", start: 3 });
+    expect(gaze.end).toBeLessThan(spec.actions!.find((a) => a.type === "look_at")!.end!);
+  });
+
+  it("paints the expressions' mouths as switched overlays, keys the planned expression, and skips art it can't find", async () => {
+    const { spec, events } = await gen();
+    const mouth = spec.switches!.find((w) => w.id === "girl_mouth")!;
+    expect(mouth.options).toEqual({ neutral: null, smile: "girl_mouth_smile", frown: "girl_mouth_frown" });
+    expect(mouth.keys).toEqual([[0, "neutral"], [4, "smile"]]);
+    expect(spec.layers.find((l) => l.id === "girl_mouth_smile")?.parent).toBe("girl_head");
+    expect(events.some((e) => e.type === "asset" && e.id === "girl_brows" && e.status === "skipped")).toBe(true);
+    // small face parts aren't flagged for their size
+    expect(spec.assets!.girl_mouth_smile.checks!.find((c) => c.name === "coverage")?.status).toBe("pass");
+  });
+
+  it("flags a head turn past what a flat head can do", async () => {
+    const { spec } = await gen();
+    expect(spec.assets!.girl_head.checks!.find((c) => c.name === "turn")).toMatchObject({ status: "review" });
+  });
+
+  it("an expression the character wasn't painted with is sent back to the planner", () => {
+    const bad = LayeredPlanSchema.parse({ ...facePlan, actions: [{ type: "expression", who: "girl", expression: "surprised", start: 1 }] });
+    expect(planProblems(bad, 6).join()).toMatch(/add "surprised" to girl.expressions/);
   });
 });

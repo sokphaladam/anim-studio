@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST, AssetSchema as AS, ActionSchema as AC, AssetCheckSchema as ACK, CleanupSchema as CL, CharacterProfileSchema as CP, MeshSchema as MS, IKSchema as IKS } from "./schema";
+import type { SceneSpecSchema as S, LayerSchema as L, OverlaySchema as O, TrackSchema as T, BeatSchema as B, EaseSchema as E, DrawingFrameSchema as DF, StrokeSchema as ST, AssetSchema as AS, ActionSchema as AC, AssetCheckSchema as ACK, CleanupSchema as CL, CharacterProfileSchema as CP, MeshSchema as MS, IKSchema as IKS, SwitchSchema as SW } from "./schema";
 
 /** A validated scene with defaults applied. */
 export type SceneSpec = z.output<typeof S>;
@@ -19,6 +19,7 @@ export type Cleanup = z.output<typeof CL>;
 export type CharacterProfile = z.output<typeof CP>;
 export type Mesh = z.output<typeof MS>;
 export type IK = z.output<typeof IKS>;
+export type Switch = z.output<typeof SW>;
 
 /** Param type after "@track" / "$palette" references are resolved to plain values. */
 export type Resolved<T> = T extends `@${string}`

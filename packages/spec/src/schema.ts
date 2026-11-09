@@ -72,6 +72,23 @@ export const LayerSchema = z.object({
 });
 
 /**
+ * Alternatives shown one at a time: each option is a layer (or null: none of them) and keys pick the option from their
+ * time on. Face slots (eyes, mouth, brows) and head-angle views are switches. A hidden option hides everything parented
+ * to it. With `fade`, a change cross-fades over that many seconds instead of cutting (a swap, never a morph).
+ */
+export const SwitchSchema = z.object({
+  id: z.string().min(1),
+  /** What it switches, for tools and planners: a face slot or a view of a character's head. */
+  kind: z.enum(["eyes", "mouth", "brows", "view", "other"]).default("other"),
+  /** The character it belongs to (a layer id), when it belongs to one. */
+  character: z.string().min(1).optional(),
+  options: z.record(z.string().min(1), z.string().min(1).nullable()),
+  /** [time, option]: the option shown from that time on (before the first key: the first key's option). */
+  keys: z.array(z.tuple([z.number().min(0), z.string().min(1)])).min(1),
+  fade: z.number().min(0).max(5).default(0),
+});
+
+/**
  * Two-bone inverse kinematics: turns `upper` and `lower` (a bone and its child bone) so the end of `lower` reaches the
  * pivot of the `target` layer. A target at the scene root stays put while the body moves (a hand on a desk); a target
  * parented to the character moves with it.
@@ -89,7 +106,7 @@ export const IKSchema = z.object({
 
 /** One line of a part's quality checklist. review = a person should look; fail = unusable as it is. */
 export const AssetCheckSchema = z.object({
-  name: z.enum(["cutout", "edges", "framing", "coverage", "joint", "reconstruction", "identity"]),
+  name: z.enum(["cutout", "edges", "framing", "coverage", "joint", "reconstruction", "identity", "turn"]),
   status: z.enum(["pass", "review", "fail"]),
   note: z.string().optional(),
 });
@@ -151,8 +168,9 @@ export const CharacterProfileSchema = z.object({
  * What a semantic action can do to its part. One-shot: look_at (turn toward target and hold), path (travel through
  * points and back). Loops for the whole scene: breathe, bob (nod to music), blink (show an eyes-closed overlay),
  * sway (rock about the pivot), drift (glide sideways and back), swing (reach toward target and back, e.g. sipping).
+ * gaze (one-shot): slide the irises a little toward the target and hold, without turning the head.
  */
-export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing"] as const;
+export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing", "gaze"] as const;
 /** flip: 1 mirrors the part left-right about its pivot (a walker turning around), 0 leaves it as painted. */
 export const ACTION_CHANNELS = ["x", "y", "rotation", "scale", "opacity", "flip"] as const;
 const LOOPS = new Set(["breathe", "bob", "blink", "sway", "drift", "swing"]);
@@ -229,6 +247,7 @@ export const SceneSpecSchema = z
     /** Character identity profiles, by character id. */
     characters: z.record(z.string(), CharacterProfileSchema).optional(),
     ik: z.array(IKSchema).optional(),
+    switches: z.array(SwitchSchema).optional(),
   })
   .superRefine((s, ctx) => {
     const dur = s.meta.duration;
@@ -288,6 +307,25 @@ export const SceneSpecSchema = z
       if (!byId.has(k.target)) at("target", `Unknown target layer "${k.target}"`);
       else if (under(k.target, k.upper)) at("target", "The target can't be part of the limb it moves");
     });
+    const switchIds = new Set<string>(), switched = new Map<string, string>();
+    s.switches?.forEach((w, i) => {
+      const at = (k: (string | number)[], message: string) => ctx.addIssue({ code: "custom", path: ["switches", i, ...k], message });
+      if (switchIds.has(w.id)) at(["id"], `Duplicate switch id "${w.id}"`);
+      switchIds.add(w.id);
+      if (w.character !== undefined && !byId.has(w.character)) at(["character"], `Unknown character layer "${w.character}"`);
+      for (const [name, layer] of Object.entries(w.options)) {
+        if (layer === null) continue;
+        if (!byId.has(layer)) at(["options", name], `Unknown layer "${layer}"`);
+        // one switch per layer: two switches fading the same layer would fight over it
+        else if (switched.has(layer) && switched.get(layer) !== w.id) at(["options", name], `"${layer}" is already switched by "${switched.get(layer)}"`);
+        switched.set(layer, w.id);
+      }
+      w.keys.forEach(([time, option], j) => {
+        if (!(option in w.options)) at(["keys", j, 1], `Unknown option "${option}". Options: ${Object.keys(w.options).join(", ")}`);
+        if (time > dur) at(["keys", j, 0], `Key time ${time}s is past the ${dur}s duration`);
+        if (j && time < w.keys[j - 1][0]) at(["keys", j, 0], "Keys must be sorted by time");
+      });
+    });
     for (const [id, a] of Object.entries(assets)) {
       if (a.from !== undefined && !(a.from in assets)) ctx.addIssue({ code: "custom", path: ["assets", id, "from"], message: `Unknown source asset "${a.from}"` });
       if (a.mask !== undefined && assets[a.mask]?.kind !== "mask") ctx.addIssue({ code: "custom", path: ["assets", id, "mask"], message: `"${a.mask}" is not a mask asset` });
@@ -301,11 +339,11 @@ export const SceneSpecSchema = z
       if (actionIds.has(a.id)) at("id", `Duplicate action id "${a.id}"`);
       actionIds.add(a.id);
       if (!seen.has(a.part)) at("part", `Unknown layer "${a.part}"`);
-      const aims = a.type === "look_at" || a.type === "swing";
+      const aims = a.type === "look_at" || a.type === "swing" || a.type === "gaze";
       if (aims && a.target === undefined) at("target", `A ${a.type} needs a target layer`);
       if (a.target !== undefined && !seen.has(a.target)) at("target", `Unknown target layer "${a.target}"`);
       if (a.target === a.part) at("target", "A part can't aim at itself");
-      if (a.type === "look_at" && a.end === undefined) at("end", "A look_at needs an end time");
+      if ((a.type === "look_at" || a.type === "gaze") && a.end === undefined) at("end", `A ${a.type} needs an end time`);
       if (a.type === "path" && !a.points) at("points", "A path needs at least 2 points");
       if (a.end !== undefined && a.end <= a.start) at("end", `End ${a.end}s must be after start ${a.start}s`);
       if (a.end !== undefined && a.end > dur) at("end", `End ${a.end}s is past the ${dur}s duration`);

@@ -147,6 +147,25 @@ Acceptance criteria:
 - Switching pose does not change the character's saved clothing, palette or proportions.
 - The user can manually override every AI-selected expression or pose.
 
+**Status (November 9, 2026): implemented, except where noted.**
+
+- **Switches** (`SceneSpec.switches`) choose one of several layers over time from keys, with an optional cross-fade: a swap, never a morph. A hidden option hides everything parented to it. Face slots (eyes, mouth, brows) and head views are switches, and every key can be edited in the Face & pose docker.
+- **Expressions** (neutral, happy, sad, surprised, eyes-closed) key all of a character's face slots at once. A slot whose art lacks an option shows the painted face, and the docker says which.
+  - Generation paints the expressions the plan lists as inpainted eye, mouth and brow patches on the head, with feathered edges. It keys planned `expression` actions.
+  - A face element the segmenter can't find is skipped with a message.
+- **Gaze** is a new `gaze` action that slides separated irises toward a target. It is bounded to 8% of the iris layer's width and never turns the head or body.
+  - Generation separates the irises from the eye whites when a character has a `look_at`, filling the whites underneath. It skips this when the eyes have too little white.
+  - The eyes lead each head turn (a 0.3 s gaze).
+- **Side views:** `POST /api/characters/view` paints the character from its saved look and seed, turned to ¾ or profile, and cuts out the head. Its colors are checked against the front head. The editor adds the new head as a view option beside the front one.
+- **Turn warnings** (`poseProblems`) flag a `look_at` that needs more than the safe turn of a flat head unless a side view is keyed by then. Generation puts a `turn` review on the head. `look_at` now treats a pivot near the head's middle as "points up" instead of guessing a direction.
+- **Pose presets** (rest, listening, looking, sipping, writing, sleeping, waking) key every skeleton bone over a chosen time and set the pose's expression. "looking" turns the head a little and adds a gaze. Presets never change assets, the profile or proportions, and every key they write is an ordinary editable key.
+- Not done:
+  - Head views are not chosen automatically for a `look_at`: the warning asks a person to key one.
+  - Switch keys are edited in the Face & pose docker, not drawn as timeline rows; pose keys do appear on the bones' timeline rows.
+  - Re-cutting a face patch in Part check uses the strict cut-out rules and may be refused.
+  - The view endpoint answers synchronously (no progress events).
+  - Iris separation and expression patches have only been run on the fake painter, not on GPU-painted art.
+
 ### M11 — Motion Director and professional animation curves
 
 **Goal:** Create movement that feels intentional, weighted and human rather than robotic.

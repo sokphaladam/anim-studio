@@ -9,6 +9,7 @@ import { ColorDocker } from "../dockers/ColorDocker";
 import { HistoryDocker } from "../dockers/History";
 import { PartCheckDocker } from "../dockers/PartCheck";
 import { RigDocker } from "../dockers/Rig";
+import { FaceDocker } from "../dockers/Face";
 import { LayersDocker } from "../dockers/Layers";
 import { Timeline } from "../dockers/Timeline";
 import { useStudio } from "../store";
@@ -104,6 +105,7 @@ export function Editor() {
       history: () => <div className="h-full overflow-auto bg-panel"><HistoryDocker /></div>,
       parts: () => <div className="h-full overflow-auto bg-panel"><PartCheckDocker /></div>,
       rig: () => <div className="h-full overflow-auto bg-panel"><RigDocker /></div>,
+      face: () => <div className="h-full overflow-auto bg-panel"><FaceDocker /></div>,
       ai: () => <div className="h-full bg-panel"><AIAssistantDocker ref={aiInput} /></div>,
     }),
     [extra],

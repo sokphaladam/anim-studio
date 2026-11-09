@@ -1,12 +1,12 @@
 // Layered animation: the language model plans layers and motions, the image painter paints each layer, and the parts
 // are cut out with real masks. The result is an ordinary editable scene of image layers rigged with parents and pivots,
 // plus ambient effects, with every motion compiled to (mostly looping) keyframes before playback.
-import { compileActions, fitPeriod, validateScene } from "@anim/engine";
-import type { Action, Asset, CharacterProfile, Layer, SceneSpec } from "@anim/spec";
+import { applyExpression, BASE_OPTION, compileActions, EXPRESSIONS, fitPeriod, poseProblems, validateScene, type Expression, type FaceSlot } from "@anim/engine";
+import type { Action, Asset, CharacterProfile, Layer, SceneSpec, Switch } from "@anim/spec";
 import { z } from "zod";
 import { ASPECT_SIZE, LOOK, PAINT_SIZE, paintPrompt, type GenerateRequest } from "./generate";
 import { extractJson } from "./json";
-import { count, crop, cutout, defaultCleanup, grow, intersect, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
+import { count, crop, cutout, defaultCleanup, grow, intersect, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, separateIrises, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
 import type { Painter } from "./painters/comfyui";
 import { prompt } from "./prompts";
 import { AIError, type Provider } from "./types";
@@ -16,6 +16,7 @@ const Frac = z.number().min(0).max(1);
 const PlaceBox = z.tuple([Frac, Frac, Frac, Frac]);
 const IDLE = ["breathe", "bob", "blink"] as const;
 const AMBIENT = ["stars", "falling-leaves", "birds", "steam", "rain"] as const;
+const FACES = ["happy", "sad", "surprised", "eyes-closed"] as const;
 
 export const LayeredPlanSchema = z.object({
   title: z.string().min(1),
@@ -33,6 +34,8 @@ export const LayeredPlanSchema = z.object({
         box: PlaceBox,
         idle: z.array(z.enum(IDLE)).default([]),
         parts: z.array(z.object({ id: Slug, find: z.string().min(2), motion: z.enum(["swing", "sway"]), target: Slug.optional() })).max(2).default([]),
+        /** Facial expressions the scene needs besides the painted one; each is painted as eye / mouth / brow overlays. */
+        expressions: z.array(z.enum(FACES)).max(4).default([]),
       }),
     )
     .min(1)
@@ -44,9 +47,10 @@ export const LayeredPlanSchema = z.object({
       z.discriminatedUnion("type", [
         z.object({ type: z.literal("look_at"), who: Slug, target: Slug, start: z.number().min(0), end: z.number().positive(), wakes: z.boolean().default(false) }),
         z.object({ type: z.literal("walk"), who: Slug, path: z.array(z.tuple([Frac, Frac])).min(2).max(6), start: z.number().min(0), end: z.number().positive() }),
+        z.object({ type: z.literal("expression"), who: Slug, expression: z.enum([...FACES, "neutral"]), start: z.number().min(0) }),
       ]),
     )
-    .max(4)
+    .max(6)
     .default([]),
 });
 export type LayeredPlan = z.output<typeof LayeredPlanSchema>;
@@ -66,7 +70,11 @@ export function planProblems(p: LayeredPlan, duration: number): string[] {
   p.actions.forEach((a, i) => {
     if (!chars.includes(a.who)) out.push(`actions[${i}].who: "${a.who}" is not a character (characters: ${chars.join(", ")})`);
     if (a.type === "look_at" && (!ids.includes(a.target) || a.target === a.who)) out.push(`actions[${i}].target: "${a.target}" must be a prop or another character (${ids.join(", ")})`);
-    if (a.end <= a.start || a.end > duration) out.push(`actions[${i}]: start ${a.start}s and end ${a.end}s must satisfy 0 <= start < end <= ${duration}`);
+    if (a.type === "expression") {
+      const c = p.characters.find((x) => x.id === a.who);
+      if (c && a.expression !== "neutral" && !c.expressions.includes(a.expression)) out.push(`actions[${i}]: add "${a.expression}" to ${a.who}.expressions so it is painted`);
+      if (a.start > duration) out.push(`actions[${i}].start: ${a.start}s is past the ${duration}s duration`);
+    } else if (a.end <= a.start || a.end > duration) out.push(`actions[${i}]: start ${a.start}s and end ${a.end}s must satisfy 0 <= start < end <= ${duration}`);
   });
   return out;
 }
@@ -105,6 +113,17 @@ const MAX_TURN_SECONDS = 2;
 /** Default ambient loop lengths (seconds), fitted to the scene so the video loops seamlessly. */
 const AMBIENT_PERIOD = { stars: 6, "falling-leaves": 6, birds: 12, steam: 3, rain: 1 } as const;
 const label = (id: string) => id.replace(/_/g, " ");
+/** How each face slot is found on the head, and the words that paint each of its options (and what to avoid). */
+const SLOT_FIND: Record<FaceSlot, string> = { eyes: "eyes", mouth: "mouth", brows: "eyebrows" };
+const SLOT_WORDS: Record<string, [string, string]> = {
+  "eyes:closed": ["closed eyes", "open eyes"],
+  "eyes:wide": ["wide open eyes, surprised", "closed eyes, narrow eyes"],
+  "mouth:smile": ["smile, happy", "frown, open mouth"],
+  "mouth:frown": ["frown, sad", "smile"],
+  "mouth:open": ["open mouth, surprised", "closed mouth, smile"],
+  "brows:sad": ["worried eyebrows, sad", "angry, raised eyebrows"],
+  "brows:raised": ["raised eyebrows, surprised", "frown, furrowed brow"],
+};
 /** Palette distance (0–441) past which a reused character's new painting is flagged as possibly someone else. */
 const IDENTITY_DRIFT = 60;
 const r2 = (v: number) => +v.toFixed(2);
@@ -152,6 +171,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const assets: Record<string, Asset> = {};
   const tracks: SceneSpec["tracks"] = {};
   const actions: Action[] = [];
+  const switches: Switch[] = [];
   // draw order: background, sky effects, props behind, characters, props in front, front effects
   const back: Layer[] = [], sky: Layer[] = [], behind: Layer[] = [], cast: Layer[] = [], front: Layer[] = [], fx: Layer[] = [];
   // every saved profile is carried over (with its reference painting) so later scenes can still use it
@@ -197,9 +217,16 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
    * Cuts a part out of `r` with mask `m` (cleaned, cropped, checked), stores it, and returns its image layer placed by
    * `at` (source px → scene). `from` and `mask` name the stored source and mask, so a person can re-cut it later.
    */
-  const place = (id: string, r: Raster, m: Mask, s: number, at: (x: number, y: number) => [number, number], extra: Partial<Layer> & { from: string; mask: string; checks?: Check[]; opacity?: number }) => {
-    const cleanup = defaultCleanup(r.width, r.height);
+  const place = (id: string, r: Raster, m: Mask, s: number, at: (x: number, y: number) => [number, number], extra: Partial<Layer> & { from: string; mask: string; checks?: Check[]; opacity?: number; small?: boolean; patch?: boolean }) => {
+    // face details are small on purpose: don't clean them as specks, don't flag their size. A face patch (a repainted
+    // mouth) is a block of face by design, so it isn't held to the cut-out shape rules, and its edge is softened to blend.
+    const small = extra.small || extra.patch;
+    const cleanup = small ? { grow: 0, holes: 0, specks: 0, feather: extra.patch ? 2 : 0 } : defaultCleanup(r.width, r.height);
     const cut = recut(r, m, cleanup, label(id));
+    if (small)
+      cut.checks = cut.checks.map((c) =>
+        c.name === "coverage" || (extra.patch && c.name === "cutout" && c.status === "fail" && !/empty/.test(c.note ?? "")) ? { ...c, status: "pass" as const, note: c.name === "cutout" ? "A face patch, blended at its edge" : c.note } : c,
+      );
     const fail = cut.checks.find((c) => c.status === "fail");
     if (fail) throw new AIError(`The ${label(id)} didn't separate cleanly: ${fail.note}`, "Try again; the source painting and masks are kept.");
     const checks = [...cut.checks, ...(extra.checks ?? [])];
@@ -243,6 +270,8 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     emit({ type: "asset", id: `${c.id}_source`, label: `${label(c.id)} (reference)`, status: "done", src: save(`${c.id}_source`, src, { kind: "source" }) });
     const sw = src.width, sh = src.height;
     const maskOf = async (text: string) => maskFrom(await tools.decode(await painter.segment!(srcPng, text, signal)), sw, sh);
+    let eyesMask: Mask | null = null;
+    const eyesOf = async () => (eyesMask ??= await maskOf("eyes"));
 
     stage("segment", `Separating the ${label(c.id)}'s parts`);
     const all = maskFrom(await tools.decode(await painter.removeBackground!(srcPng, signal)), sw, sh);
@@ -304,7 +333,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     if (head && eyeState) {
       const id = `${c.id}_head_${eyeState}`;
       emit({ type: "asset", id, label: label(id), status: "running" });
-      const eyeMask = intersect(await maskOf("eyes"), head.mask);
+      const eyeMask = intersect(await eyesOf(), head.mask);
       if (count(eyeMask) >= 20) {
         const m = grow(eyeMask, sw, sh, Math.max(3, Math.round(sw * 0.012)));
         const words = wakes ? ["open eyes, awake, looking up", "closed eyes, sleeping"] : ["closed eyes, peaceful", "open eyes"];
@@ -315,6 +344,57 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
         }
       }
       if (!eyes) emit({ type: "asset", id, label: label(id), status: "skipped", message: "Couldn't find the eyes; the head keeps its painted eyes" });
+    }
+
+    // irises: separated from the eye whites so the eyes can look somewhere without the head turning (for look_at)
+    let headFill: Raster | null = null, irises: Mask | null = null;
+    if (head && plan.actions.some((a) => a.type === "look_at" && a.who === c.id)) {
+      const id = `${c.id}_irises`;
+      const sep = separateIrises(src, intersect(await eyesOf(), head.mask), sw, sh);
+      const f = sep && smear(src, sep.iris, sep.sclera);
+      // the eye whites must cover where the irises were, or moving them would leave holes
+      if (sep && f && count(f.filled) === count(sep.iris)) {
+        headFill = f.r;
+        irises = sep.iris;
+        save(`${head.id}_fill`, headFill, { kind: "source", from: `${c.id}_source` });
+        save(`${id}_mask`, maskImage(irises, sw, sh), { kind: "mask", from: `${c.id}_source` });
+      } else emit({ type: "asset", id, label: label(id), status: "skipped", message: "No eye whites to move the irises within; only the head turns" });
+    }
+
+    // face slots: each expression the plan needs is painted as eye / mouth / brow overlays on the head
+    const overlays: { id: string; r: Raster; mask: Mask }[] = [];
+    if (head && c.expressions.length) {
+      const wanted = new Map<FaceSlot, Set<string>>();
+      for (const e of c.expressions)
+        for (const k of ["eyes", "mouth", "brows"] as const) {
+          const o: string = EXPRESSIONS[e][k];
+          if (o !== BASE_OPTION[k]) wanted.set(k, (wanted.get(k) ?? new Set()).add(o));
+        }
+      for (const [kind, options] of wanted) {
+        const region = intersect(kind === "eyes" ? await eyesOf() : await maskOf(SLOT_FIND[kind]), head.mask);
+        if (count(region) < 12) {
+          emit({ type: "asset", id: `${c.id}_${kind}`, label: label(`${c.id}_${kind}`), status: "skipped", message: `Couldn't find the ${SLOT_FIND[kind]}; expressions keep the painted ${SLOT_FIND[kind]}` });
+          continue;
+        }
+        const m = intersect(grow(region, sw, sh, Math.max(3, Math.round(sw * 0.01))), head.mask);
+        const sw_: Switch = { id: `${c.id}_${kind}`, kind, character: c.id, options: { [BASE_OPTION[kind]]: null }, keys: [[0, BASE_OPTION[kind]]], fade: 0.08 };
+        for (const o of options) {
+          const id = `${c.id}_${kind}_${o}`;
+          emit({ type: "asset", id, label: label(id), status: "running" });
+          const [pos, neg] = SLOT_WORDS[`${kind}:${o}`];
+          const out = await tools.decode(await painter.inpaint!({ image: srcPng, mask: tools.encode(maskImage(m, sw, sh)), positive: paintPrompt(`${pos}, ${look}`), negative: `${LOOK.negative}, ${neg}`, seed, denoise: 0.65, signal }));
+          if (out.width !== sw || out.height !== sh) {
+            emit({ type: "asset", id, label: label(id), status: "skipped", message: "The painter returned another size; the painted face is kept" });
+            continue;
+          }
+          const r = paste(src, out, m);
+          save(`${id}_fill`, r, { kind: "source", from: `${c.id}_source` });
+          save(`${id}_mask`, maskImage(m, sw, sh), { kind: "mask", from: `${c.id}_source` });
+          overlays.push({ id, r, mask: m });
+          sw_.options[o] = id;
+        }
+        if (Object.keys(sw_.options).length > 1) switches.push(sw_);
+      }
     }
 
     // place: fit the whole character into its box (bottom-centred), in scene units
@@ -353,12 +433,16 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       const joint = joints.get(p.id);
       const pb = maskBox(p.mask, sw)!;
       const jointCheck: Check = joint ? { name: "joint", status: "pass", note: "Its pivot is where it meets the body" } : { name: "joint", status: "review", note: "It doesn't touch the body, so its pivot is a guess; drag it into place" };
-      cast.push(place(p.id, src, p.mask, s, at, { parent: `${c.id}_body`, pivot: at(...(joint ?? [(pb[0] + pb[2]) / 2, pb[3]])), from: `${c.id}_source`, mask: `${p.id}_mask`, checks: [jointCheck] }));
+      const lifted = p.id === head?.id && headFill;
+      cast.push(place(p.id, lifted ? headFill! : src, p.mask, s, at, { parent: `${c.id}_body`, pivot: at(...(joint ?? [(pb[0] + pb[2]) / 2, pb[3]])), from: lifted ? `${p.id}_fill` : `${c.id}_source`, mask: `${p.id}_mask`, checks: [jointCheck] }));
       // a swing reaches toward its target (by default the character's own head: sipping); with nothing to reach for it sways
       const reach = p.target ?? `${c.id}_head`;
       if (p.motion === "swing" && reach !== p.id) actions.push({ id: `${p.id}_swings`, type: "swing", part: p.id, target: reach, start: 0, ease: "inOut", amount: 1 });
       else if (p.motion) actions.push({ id: `${p.id}_sways`, type: "sway", part: p.id, start: 0, ease: "inOut", amount: 2 });
     }
+    if (head && irises)
+      cast.push(place(`${c.id}_irises`, src, irises, s, at, { parent: head.id, from: `${c.id}_source`, mask: `${c.id}_irises_mask`, small: true, checks: [{ name: "reconstruction", status: "pass", note: "The eye whites under them were filled from the whites around them" }] }));
+    for (const o of overlays) cast.push(place(o.id, o.r, o.mask, s, at, { parent: head!.id, from: `${o.id}_fill`, mask: `${o.id}_mask`, patch: true }));
     if (eyes && head) cast.push(place(`${c.id}_head_${eyeState}`, eyes, head.mask, s, at, { parent: head.id, from: `${c.id}_head_${eyeState}_fill`, mask: `${head.id}_mask`, opacity: 0 }));
     if (c.idle.includes("breathe")) actions.push({ id: `${c.id}_breathes`, type: "breathe", part: `${c.id}_body`, start: 0, ease: "inOut", amount: 1 });
     if (c.idle.includes("bob") && head) actions.push({ id: `${c.id}_bobs`, type: "bob", part: head.id, start: 0, ease: "inOut", amount: 1 });
@@ -413,6 +497,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   stage("animate", "Turning the motions into keyframes");
   const layers = [...back, ...sky, ...behind, ...cast, ...front, ...fx];
   for (const a of plan.actions) {
+    if (a.type === "expression") continue; // keyed on the face switches below
     if (a.type === "walk") {
       actions.push({ id: `${a.who}_walks`, type: "path", part: a.who, start: a.start, end: a.end, ease: "inOut", amount: 1, points: a.path.map(([x, y]) => [r2(x * W), r2(y * H)]) });
       continue;
@@ -424,13 +509,24 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       awake.params = { ...awake.params, opacity: `@${a.who}_eyes_open` };
     }
     actions.push({ id: `${a.who}_looks_at_${a.target}`, type: "look_at", part: `${a.who}_head`, target, start: a.start, end: Math.min(a.end, a.start + MAX_TURN_SECONDS), ease: "inOut", amount: 1 });
+    // the eyes lead: they reach the target quickly, the head follows
+    if (layers.some((l) => l.id === `${a.who}_irises`))
+      actions.push({ id: `${a.who}_gazes_at_${a.target}`, type: "gaze", part: `${a.who}_irises`, target, start: a.start, end: Math.min(a.end, a.start + 0.3), ease: "out", amount: 1 });
   }
-  const draft = validateScene({ version: 1, meta, palette: {}, tracks, layers, overlays: [], beats: plan.beats, assets, actions, ...(Object.keys(characters).length ? { characters } : {}) });
+  let scene = { version: 1, meta, palette: {}, tracks, layers, overlays: [], beats: plan.beats, assets, actions, ...(Object.keys(characters).length ? { characters } : {}), ...(switches.length ? { switches } : {}) } as SceneSpec;
+  for (const a of plan.actions) if (a.type === "expression") scene = applyExpression(scene, a.who, a.expression as Expression, a.start).spec;
+  const draft = validateScene(scene);
   if (!draft.ok) throw new Error(`Layered scene failed validation: ${draft.errors.join("; ")}`);
 
   stage("validate", "Checking layers, masks and references");
   const final = validateScene(compileActions(draft.spec));
   if (!final.ok) throw new Error(`Layered scene failed validation: ${final.errors.join("; ")}`);
+  for (const pr of poseProblems(final.spec)) {
+    const a = final.spec.assets?.[String(final.spec.layers.find((l) => l.id === pr.layer)?.params.asset)];
+    if (!a) continue;
+    const checks = [...(a.checks ?? []), { name: "turn" as const, status: "review" as const, note: pr.message }];
+    final.spec.assets![String(final.spec.layers.find((l) => l.id === pr.layer)!.params.asset)] = { ...a, checks, review: reviewOf(checks) };
+  }
   emit({ type: "done", spec: final.spec, repairs: 0 });
   return final.spec;
 }

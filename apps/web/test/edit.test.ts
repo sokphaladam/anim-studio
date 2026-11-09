@@ -2,7 +2,7 @@ import { apply, layerMatrix, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addIK, addSkeleton, addStroke, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { addGaze, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
 import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
@@ -280,5 +280,64 @@ describe("rigging edits (M9)", () => {
     expect("min" in s.layers.find((l) => l.id === "girl_bone_lower_arm_l")!.params).toBe(false);
     expect(setMesh(s, "body", null).layers.find((l) => l.id === "body")?.mesh).toBeUndefined();
     valid(s);
+  });
+});
+
+describe("faces, views and gaze (M10)", () => {
+  const base = () =>
+    ({
+      version: 1,
+      meta: { title: "t", duration: 4, fps: 24, width: 400, height: 400 },
+      palette: {},
+      tracks: {},
+      overlays: [],
+      beats: [],
+      layers: [
+        { id: "clock", type: "image", params: { asset: "a", x: 300, y: 50, w: 40, h: 40 } },
+        { id: "girl", type: "group", params: {} },
+        { id: "girl_body", type: "image", parent: "girl", params: { asset: "a", x: 150, y: 200, w: 100, h: 150 } },
+        { id: "girl_head", type: "image", parent: "girl_body", pivot: [200, 200], params: { asset: "a", x: 170, y: 140, w: 60, h: 60 } },
+        { id: "girl_irises", type: "image", parent: "girl_head", params: { asset: "a", x: 180, y: 165, w: 40, h: 6 } },
+        { id: "girl_mouth_smile", type: "image", parent: "girl_head", params: { asset: "a", x: 190, y: 185, w: 20, h: 5 } },
+      ],
+      assets: { a: { src: "/a.png", width: 10, height: 10, kind: "image" } },
+      switches: [{ id: "girl_mouth", kind: "mouth", character: "girl", options: { neutral: null, smile: "girl_mouth_smile" }, keys: [[0, "neutral"]], fade: 0 }],
+    }) as unknown as SceneSpec;
+  const view: ViewResponse = {
+    image: { src: "/v.png", width: 30, height: 40, crop: [10, 10, 40, 50], checks: [{ name: "identity", status: "pass" }], review: null },
+    source: { src: "/vs.png", width: 100, height: 100 },
+    mask: { src: "/vm.png", width: 100, height: 100 },
+  };
+
+  it("adds a painted view beside the head with a view switch starting on the front", () => {
+    const s = addView(base(), "girl", "profile_left", view)!;
+    const l = s.layers.find((x) => x.id === "girl_head_profile_left")!;
+    expect(l).toMatchObject({ parent: "girl_body", pivot: [200, 200], params: { x: 177.5, y: 140, w: 45, h: 60 } }); // centred on the head (170 + 30 - 22.5)
+    expect(s.switches!.find((w) => w.id === "girl_view")).toMatchObject({ kind: "view", options: { front: "girl_head", profile_left: "girl_head_profile_left" }, keys: [[0, "front"]] });
+    valid(s);
+    const two = addView(s, "girl", "three_quarter_left", view)!;
+    expect(Object.keys(two.switches!.find((w) => w.id === "girl_view")!.options)).toEqual(["front", "profile_left", "three_quarter_left"]);
+  });
+
+  it("adds and removes a gaze (with its tracks)", () => {
+    const s = addGaze(base(), "girl", "clock", 1)!;
+    const a = s.actions![0];
+    expect(a).toMatchObject({ type: "gaze", part: "girl_irises", target: "clock", start: 1 });
+    expect(Object.values(a.tracks!).every((n) => n in s.tracks)).toBe(true);
+    valid(s);
+    const gone = removeAction(s, a.id);
+    expect(gone.actions).toEqual([]);
+    expect(Object.keys(gone.tracks)).toEqual([]);
+  });
+
+  it("deleting or renaming a switched layer keeps switches valid; setSwitch keeps keys sorted", () => {
+    const del = deleteLayer(base(), "girl_mouth_smile");
+    expect(del.switches).toEqual([]);
+    valid(del);
+    const ren = renameLayer(base(), "girl_mouth_smile", "smile");
+    expect(ren.switches![0].options.smile).toBe("smile");
+    valid(ren);
+    const k = setSwitch(base(), "girl_mouth", { keys: [[2, "smile"], [0, "neutral"]] });
+    expect(k.switches![0].keys).toEqual([[0, "neutral"], [2, "smile"]]);
   });
 });

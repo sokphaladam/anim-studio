@@ -9,3 +9,4 @@ export { comfyui, comfyHealth, comfyInstall, CHECKPOINT, VIDEO_MODEL, VIDEO_SIZE
 export { generateLayered, planProblems, LayeredPlanSchema, type LayeredPlan, type LayeredTools, type LayeredEvent, type LayeredStage } from "./layered";
 export { recut, reviewOf, maskFrom, type Raster, type Check, type Cleanup } from "./masks";
 export { findMotions, type PaintingInfo } from "./regions";
+export { paintView, type View, type ViewRequest, type ViewResult } from "./views";

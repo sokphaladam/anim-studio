@@ -106,3 +106,15 @@ it("re-cuts a part from its stored source and mask, refuses a cleanup that break
   expect(next.characters.girl.look).toBe("girl, hoodie, green scarf");
   expect(next.assets.girl_reference.src).toBe(spec.assets[girl.reference!].src);
 });
+
+it("paints a turned view of a character's head, checked against the front head", async () => {
+  const { jobId } = (await (await post("/api/generate", REQ)).json()) as { jobId: string };
+  const spec = (await events(jobId)).find((e) => e.type === "done")!.data.spec as { assets: Record<string, { src: string }>; characters: Record<string, { look: string; seed?: number }> };
+  const r = await post("/api/characters/view", { look: spec.characters.girl.look, seed: spec.characters.girl.seed, view: "three_quarter", facing: "left", front: spec.assets.girl_head.src });
+  expect(r.status).toBe(200);
+  const v = (await r.json()) as { image: { src: string; crop: number[]; checks: { name: string; status: string }[] }; source: { src: string }; mask: { src: string } };
+  expect(v.image.checks.find((c) => c.name === "identity")?.status).toBe("pass");
+  for (const x of [v.image, v.source, v.mask]) expect((await fetch(`${base}${x.src}`)).status).toBe(200);
+  expect((await post("/api/characters/view", { look: "girl", view: "sideways", facing: "left", front: spec.assets.girl_head.src })).status).toBe(400);
+  expect((await post("/api/characters/view", { look: "girl", view: "profile", facing: "left", front: "/api/images/000000000000000000000000.png" })).status).toBe(404);
+});

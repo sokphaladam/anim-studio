@@ -196,6 +196,37 @@ try {
   check(!(await page.getByRole("region", { name: "Rig check" }).count()) || (await page.getByRole("region", { name: "Rig check" }).getByLabel("error").count()) === 0, "rig check shows no errors");
   await page.locator(".dv-tab", { hasText: "Layers" }).click();
 
+  // Face & pose docker: a pose preset, the turn warning, a painted side view, and a view key that answers the warning
+  const faceOn = async (id) => {
+    await page.locator(".dv-tab", { hasText: "Layers" }).click();
+    await row(id).click();
+    await page.locator(".dv-tab", { hasText: "Face & pose" }).click();
+  };
+  await page.evaluate(() => window.studio.getState().set({ t: 1, playing: false }));
+  await faceOn("girl");
+  await page.getByRole("button", { name: "sipping", exact: true }).click();
+  const sip = await state(() => {
+    const s = window.studio.getState().spec;
+    const r = s.layers.find((l) => l.id === "girl_bone_lower_arm_l").transform?.rotation;
+    return typeof r === "string" ? s.tracks[r.slice(1)].keys : null;
+  });
+  check(!!sip && sip.some(([, v]) => Math.abs(v + 1.6) < 1e-6), `the sipping pose keys the forearm (${JSON.stringify(sip)})`);
+  const notes = page.getByRole("region", { name: "Notes" });
+  check(await notes.getByText(/a flat head can turn/).isVisible(), "the head turn toward the clock is flagged");
+  await page.getByRole("button", { name: "Profile, facing left" }).click();
+  await page.waitForFunction(() => window.studio.getState().spec.switches?.some((w) => w.kind === "view"), null, { timeout: 60000 });
+  check(await notes.getByText(/needs a side view/).isVisible(), "with a side view painted, the warning asks for it to be keyed");
+  await page.evaluate(() => window.studio.getState().set({ t: 3, playing: false }));
+  await page.getByRole("combobox", { name: "girl_view option to add" }).selectOption("profile_left");
+  await page.getByRole("button", { name: "Key at playhead" }).click();
+  const viewKeys = await state(() => window.studio.getState().spec.switches.find((w) => w.kind === "view").keys);
+  check(JSON.stringify(viewKeys) === JSON.stringify([[0, "front"], [3, "profile_left"]]), `the profile is keyed from 3s (${JSON.stringify(viewKeys)})`);
+  check(!(await notes.getByText(/a flat head can turn|needs a side view/).count()), "the side view answers the turn warning");
+  const [frontAt2, profileAt4] = [await frame(2), await frame(4)];
+  check(frontAt2 !== profileAt4, "the head switches to the profile view on screen");
+  await page.screenshot({ path: `${out}/layered-face.png` });
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+
   // save, reopen: assets, rig and keyframes intact
   const saved = await state(async () => {
     const { saveProject } = await import("/src/store/projects.ts");
@@ -206,10 +237,11 @@ try {
   await page.getByText(saved.meta.title).first().click();
   await page.waitForFunction(() => window.studio.getState().screen === "editor");
   const reopened = await state(() => window.studio.getState().spec);
-  check(JSON.stringify(reopened.assets) === JSON.stringify(saved.assets), "assets survive save and reopen");
+  const sorted = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+  check(sorted(reopened.assets) === sorted(saved.assets), "assets survive save and reopen");
   // key order isn't meaningful (the server returns schema order), so compare with sorted keys
   const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
-  check(canon([reopened.layers, reopened.tracks, reopened.actions, reopened.ik]) === canon([saved.layers, saved.tracks, saved.actions, saved.ik]), "rig (bones, mesh, IK), keyframes and actions survive save and reopen");
+  check(canon([reopened.layers, reopened.tracks, reopened.actions, reopened.ik, reopened.switches]) === canon([saved.layers, saved.tracks, saved.actions, saved.ik, saved.switches]), "rig (bones, mesh, IK), switches, keyframes and actions survive save and reopen");
   await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/layered-reopened.png` });
 

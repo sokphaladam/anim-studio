@@ -48,7 +48,8 @@ export const painter: Painter = {
         g.beginPath();
         g.ellipse(w / 2, h * 0.62, w * 0.2, h * 0.26, 0, 0, Math.PI * 2);
         g.fill();
-        g.fillStyle = "#f0c8aa";
+        // a turned view is told apart by a slightly darker skin (still what "head" segments)
+        g.fillStyle = /profile|three-quarter/.test(a.positive) ? "#e8c0a0" : "#f0c8aa";
         g.beginPath();
         g.arc(w / 2, h * 0.3, h * 0.12, 0, Math.PI * 2);
         g.fill();

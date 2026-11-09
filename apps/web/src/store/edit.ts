@@ -1,5 +1,5 @@
 // Pure, immutable scene edits. Unchanged frames keep their identity, so the engine's per-frame caches stay valid.
-import { apply, boneTip, invert, layerMatrix, skeleton, type SkeletonKind, type SkeletonOptions } from "@anim/engine";
+import { apply, boneTip, compileActions, invert, layerMatrix, setTransformAt, skeleton, type SkeletonKind, type SkeletonOptions } from "@anim/engine";
 import type { Asset, AssetCheck, Cleanup, DrawingFrame, IK, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
 
 type Pt = [number, number];
@@ -60,7 +60,17 @@ function forgetRig(spec: SceneSpec, id: string): SceneSpec {
     const bones = l.mesh.bones.filter((b) => b !== id);
     return { ...l, mesh: bones.length ? { ...l.mesh, bones, ...(l.mesh.weights && { weights: l.mesh.weights.map((w) => w.filter((_, i) => i !== k)) }) } : undefined };
   });
-  return { ...spec, layers, ...(spec.ik && { ik: spec.ik.filter((k) => ![k.upper, k.lower, k.target].includes(id)) }) };
+  return {
+    ...spec,
+    layers,
+    ...(spec.ik && { ik: spec.ik.filter((k) => ![k.upper, k.lower, k.target].includes(id)) }),
+    // a switch option showing the removed layer now shows nothing; a switch left with nothing to show goes
+    ...(spec.switches && {
+      switches: spec.switches
+        .map((w) => ({ ...w, character: w.character === id ? undefined : w.character, options: Object.fromEntries(Object.entries(w.options).map(([k, v]) => [k, v === id ? null : v])) }))
+        .filter((w) => Object.values(w.options).some((v) => v !== null)),
+    }),
+  };
 }
 
 /**
@@ -119,32 +129,12 @@ export function setStrokes(spec: SceneSpec, id: string, frameIndex: number, stro
 
 export const setParam = (spec: SceneSpec, id: string, key: string, value: unknown): SceneSpec => mapLayer(spec, id, (l) => ({ ...l, params: { ...l.params, [key]: value } }));
 
-const DEFAULTS: Transform = { x: 0, y: 0, rotation: 0, scale: 1 };
-const trackName = (id: string, k: TransformKey) => `${id.replace(/[^\w-]/g, "_").replace(/^([^A-Za-z_])/, "_$1")}-${k}`;
-
 /**
  * Sets transform values at `frame`. Animated values (already "@track") always get a key; static values become
  * keyed tracks when autoKey is on, otherwise they are set directly.
  */
-export function setTransform(spec: SceneSpec, id: string, values: Partial<Record<TransformKey, number>>, frame: number, autoKey: boolean): SceneSpec {
-  const l = findLayer(spec, id);
-  if (!l) return spec;
-  const tracks = { ...spec.tracks };
-  const transform: Transform = { ...DEFAULTS, ...l.transform };
-  const t = frameTime(spec, frame);
-  for (const [k, v] of Object.entries(values) as [TransformKey, number][]) {
-    const cur = transform[k];
-    if (typeof cur === "string" || autoKey) {
-      const name = typeof cur === "string" ? cur.slice(1) : trackName(id, k);
-      const tr = tracks[name] ?? { keys: [], ease: "inOut" as const };
-      const keys = tr.keys.filter(([kt]) => Math.abs(kt - t) > 1e-6);
-      keys.push([t, v]);
-      tracks[name] = { ...tr, keys: keys.sort((a, b) => a[0] - b[0]) };
-      transform[k] = `@${name}`;
-    } else transform[k] = v;
-  }
-  return { ...spec, tracks, layers: spec.layers.map((x) => (x.id === id ? { ...x, transform } : x)) };
-}
+export const setTransform = (spec: SceneSpec, id: string, values: Partial<Record<TransformKey, number>>, frame: number, autoKey: boolean): SceneSpec =>
+  setTransformAt(spec, id, values, frameTime(spec, frame), autoKey);
 
 // --- geometry for select / transform ---
 
@@ -198,6 +188,7 @@ export function renameLayer(spec: SceneSpec, from: string, to: string): SceneSpe
     layers: layers.map((l) => (l.mesh?.bones.includes(from) ? { ...l, mesh: { ...l.mesh, bones: l.mesh.bones.map(swap) } } : l)),
     ...(spec.actions && { actions: spec.actions.map((a) => ({ ...a, part: swap(a.part), target: swap(a.target) })) }),
     ...(spec.ik && { ik: spec.ik.map((k) => ({ ...k, upper: swap(k.upper), lower: swap(k.lower), target: swap(k.target) })) }),
+    ...(spec.switches && { switches: spec.switches.map((w) => ({ ...w, character: w.character && swap(w.character), options: Object.fromEntries(Object.entries(w.options).map(([k, v]) => [k, v && swap(v)])) })) }),
   };
 }
 export const setFps = (spec: SceneSpec, fps: 12 | 24 | 30): SceneSpec => ({ ...spec, meta: { ...spec.meta, fps } });
@@ -329,3 +320,59 @@ export function reparentKeepingPlace(spec: SceneSpec, id: string, parent: string
   const pivot = apply(invert(layerMatrix(spec, np, t)), ...world).map((v) => +v.toFixed(2)) as Pt;
   return mapLayer(spec, id, (x) => ({ ...x, parent, pivot }));
 }
+
+/** A painted head view as the server returns it. */
+export type ViewResponse = { image: Recut & { review?: string | null }; source: { src: string; width: number; height: number }; mask: { src: string; width: number; height: number } };
+
+/**
+ * Adds a painted side view of a character's head: a layer beside the front head (same parent and neck pivot, as tall,
+ * bottom-centred on it) and a "view" switch between them, starting on the front. Null if the head can't be found.
+ */
+export function addView(spec: SceneSpec, character: string, view: string, r: ViewResponse): SceneSpec | null {
+  const head = findLayer(spec, `${character}_head`);
+  const p = head?.params as { x?: unknown; y?: unknown; w?: unknown; h?: unknown } | undefined;
+  if (!head || !p || ![p.x, p.y, p.w, p.h].every((v) => typeof v === "number")) return null;
+  const [x, y, w, h] = [p.x, p.y, p.w, p.h] as number[];
+  const id = findLayer(spec, `${character}_head_${view}`) ? uniqueId(spec, `${character}_head_${view}`) : `${character}_head_${view}`;
+  const nh = h, nw = (h * r.image.width) / r.image.height;
+  const layer: Layer = { id, type: "image", params: { asset: id, x: +(x + w / 2 - nw / 2).toFixed(2), y: +(y + h - nh).toFixed(2), w: +nw.toFixed(2), h: +nh.toFixed(2) }, ...(head.parent && { parent: head.parent }), ...(head.pivot && { pivot: head.pivot }) };
+  const { review, ...image } = r.image;
+  const assets: Record<string, Asset> = {
+    ...spec.assets,
+    [`${id}_source`]: { ...r.source, kind: "source" },
+    [`${id}_mask`]: { ...r.mask, kind: "mask", from: `${id}_source` },
+    [id]: { ...image, kind: "image", from: `${id}_source`, mask: `${id}_mask`, ...(review ? { review } : {}) },
+  };
+  const i = spec.layers.findIndex((l) => l.id === head.id);
+  const layers = [...spec.layers.slice(0, i + 1), layer, ...spec.layers.slice(i + 1)];
+  const sid = `${character}_view`;
+  const existing = spec.switches?.find((w) => w.id === sid);
+  const switches = existing
+    ? spec.switches!.map((w) => (w.id === sid ? { ...w, options: { ...w.options, [view]: id } } : w))
+    : [...(spec.switches ?? []), { id: sid, kind: "view" as const, character, options: { front: head.id, [view]: id }, keys: [[0, "front"]] as [number, string][], fade: 0.15 }];
+  return { ...spec, assets, layers, switches };
+}
+
+/** Adds a gaze: the character's irises slide toward `target` from t over `duration` and hold. */
+export function addGaze(spec: SceneSpec, character: string, target: string, t: number, duration = 0.3): SceneSpec | null {
+  const irises = findLayer(spec, `${character}_irises`);
+  if (!irises || !findLayer(spec, target)) return null;
+  const D = spec.meta.duration, start = Math.min(t, D - 0.05);
+  let id = `${character}_gazes_at_${target}`;
+  for (let n = 2; spec.actions?.some((a) => a.id === id); n++) id = `${character}_gazes_at_${target}-${n}`;
+  return compileActions({ ...spec, actions: [...(spec.actions ?? []), { id, type: "gaze", part: irises.id, target, start, end: Math.min(D, start + duration), ease: "out", amount: 1 }] });
+}
+
+/** Removes an action and the tracks it compiled to. */
+export function removeAction(spec: SceneSpec, id: string): SceneSpec {
+  const a = spec.actions?.find((x) => x.id === id);
+  if (!a) return spec;
+  const tracks = Object.fromEntries(Object.entries(spec.tracks).filter(([name]) => !Object.values(a.tracks ?? {}).includes(name)));
+  return { ...spec, tracks, actions: spec.actions!.filter((x) => x.id !== id) };
+}
+
+/** Changes a switch's keys or fade. */
+export const setSwitch = (spec: SceneSpec, id: string, patch: { keys?: [number, string][]; fade?: number }): SceneSpec => ({
+  ...spec,
+  switches: spec.switches?.map((w) => (w.id === id ? { ...w, ...patch, ...(patch.keys && { keys: [...patch.keys].sort((a, b) => a[0] - b[0]) }) } : w)),
+});

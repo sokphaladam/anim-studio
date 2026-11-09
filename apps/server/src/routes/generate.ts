@@ -1,4 +1,4 @@
-import { AIError, generateLayered, videoPrompt, VIDEO_SIZE, type AnimateFn, type LayeredTools, type Provider } from "@anim/ai";
+import { AIError, generateLayered, paintView, videoPrompt, VIDEO_SIZE, type AnimateFn, type LayeredTools, type Provider } from "@anim/ai";
 import { AssetSchema, CharacterProfileSchema } from "@anim/spec";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -47,6 +47,27 @@ export function generateRoutes(app: FastifyInstance, provider: () => Provider, a
       }
     });
     return { jobId };
+  });
+
+  const View = z.object({ look: z.string().trim().min(2).max(600), seed: z.number().int().min(0).optional(), view: z.enum(["three_quarter", "profile"]), facing: z.enum(["left", "right"]), front: z.string() });
+  /**
+   * Paints a character's head turned to one side (from its saved look and seed) and cuts it out. The editor adds it as a
+   * view the head can switch to. Answers when done (a painting and two masks, so a while on a GPU).
+   */
+  app.post("/api/characters/view", async (req, reply) => {
+    const b = View.safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: b.error.issues[0].message });
+    if (!layered || !(await layered.ready())) return reply.code(422).send({ error: "Generating needs the image painter and its segmentation models", fix: "Run pnpm setup:painter --layered" });
+    const front = readImage?.(b.data.front);
+    if (!front) return reply.code(404).send({ error: "The front head image is missing" });
+    const ac = new AbortController();
+    reply.raw.on("close", () => !reply.raw.writableFinished && ac.abort());
+    try {
+      return await paintView({ ...b.data, front }, layered.tools, ac.signal);
+    } catch (e) {
+      if (e instanceof AIError) return reply.code(422).send({ error: e.message, fix: e.fix });
+      throw e;
+    }
   });
 
   // Server-Sent Events: replays everything so far, then streams until the job ends

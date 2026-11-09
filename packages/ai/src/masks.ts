@@ -361,7 +361,23 @@ export function cleanMask(m: Mask, width: number, height: number, c: Cleanup): M
 /** Cleanup for generated parts: drops stray specks under ~0.05% of the painting and fills pinholes under ~0.03%. */
 export const defaultCleanup = (width: number, height: number) => ({ grow: 0, holes: Math.round(width * height * 0.0003), specks: Math.round(width * height * 0.0005), feather: 0 });
 
-export type Check = { name: "cutout" | "edges" | "framing" | "coverage" | "joint" | "reconstruction" | "identity"; status: "pass" | "review" | "fail"; note?: string };
+export type Check = { name: "cutout" | "edges" | "framing" | "coverage" | "joint" | "reconstruction" | "identity" | "turn"; status: "pass" | "review" | "fail"; note?: string };
+
+/**
+ * Splits painted eyes into irises (what moves for a gaze) and eye whites (what they move over). Irises are the eyes'
+ * non-pale pixels, kept off the eyes' outline so lashes and lids stay on the head. Null when the eyes have too little
+ * white to move within (closed or tiny eyes) or no iris to move.
+ */
+export function separateIrises(r: Raster, eyes: Mask, width: number, height: number): { iris: Mask; sclera: Mask } | null {
+  const inner = shrink(eyes, width, height, 2);
+  const sclera = new Uint8Array(eyes.length), iris = new Uint8Array(eyes.length);
+  for (let i = 0; i < eyes.length; i++) {
+    if (eyes[i] < ON) continue;
+    if (pale(r.data, i * 4)) sclera[i] = 255;
+    else if (inner[i] >= ON) iris[i] = 255;
+  }
+  return count(sclera) >= count(eyes) * 0.15 && count(iris) >= 12 ? { iris, sclera } : null;
+}
 
 /** The checklist every cut-out gets: a valid cut-out, clean edges, the whole subject in its painting, a sensible size. */
 export function partChecks(img: Raster, m: Mask, width: number, height: number, name: string): Check[] {

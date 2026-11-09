@@ -9,6 +9,7 @@ import { drawWith, getObject, makeEnv, parseParams, type Ctx2D } from "./registr
 import { resolve } from "./resolve";
 import { actionOffsets } from "./actions";
 import { clampBone, drawMesh, meshPose, solveIK } from "./rig";
+import { switchVisibility } from "./face";
 
 export { catalog, validateScene, objectTypes, getObject, defineObject, type ObjectDef, type Env, type ValidationResult } from "./registry";
 export { evalTrack, integrate, EASE } from "./tracks";
@@ -19,7 +20,8 @@ export { invert, apply, mul, type Mat } from "./matrix";
 export { objectBounds, layerPivot, type Box } from "./bounds";
 export { registerImage, getImage, imageSources, frameUrl, type Bitmap } from "./images";
 export { boneTip, clampBone, solveIK, meshPose, meshTriangles, drawMesh, rigProblems, skeleton, mirrorBone, type MeshPose, type RigProblem, type SkeletonKind, type SkeletonOptions } from "./rig";
-export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, MAX_TURN } from "./actions";
+export { setTransformAt, switchState, switchVisibility, setSwitchKey, applyExpression, applyPose, characterOf, poseProblems, EXPRESSIONS, BASE_OPTION, POSES, type Expression, type Pose, type FaceSlot, type PoseProblem } from "./face";
+export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, requiredTurn, MAX_TURN, MAX_GAZE } from "./actions";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */
 export const ENGINE_FONTS = ['italic 400 46px "Fraunces Variable"', "400 19px Figtree"];
@@ -100,7 +102,7 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
   // scratch surface for compositing drawing layers (cleared before every use, so it carries no state between frames)
   let scratch = make(canvas.width, canvas.height);
 
-  function drawDrawing(l: Layer, t: number, base: Mat, M: Mat, options?: RenderOptions) {
+  function drawDrawing(l: Layer, t: number, base: Mat, M: Mat, options?: RenderOptions, vis = 1) {
     const frames = l.frames ?? [];
     const idx = frameIndexAt(frames, t);
     if (idx < 0 && !options?.onion) return;
@@ -133,7 +135,7 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
       for (let k = o.before; k >= 1; k--) if (idx - k >= 0) composite(idx - k, o.opacity * (1 - (k - 1) / (o.before + 1)), o.beforeColor);
       for (let k = o.after; k >= 1; k--) if (idx + k < frames.length) composite(idx + k, o.opacity * (1 - (k - 1) / (o.after + 1)), o.afterColor);
     }
-    if (idx >= 0) composite(idx, p.opacity);
+    if (idx >= 0) composite(idx, p.opacity * vis);
   }
 
   return {
@@ -158,13 +160,17 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
       for (const l of spec.layers) {
         const def = getObject(l.type);
         if (!def) continue;
+        // a switched-off option (another face state or view) draws nothing; a fading one draws part-transparent
+        const vis = switchVisibility(spec, l, t);
+        if (vis <= 0) continue;
         const M = layerMatrix(spec, l, t, make);
         if (l.type === "drawing") {
-          drawDrawing(l, t, base, M, options);
+          drawDrawing(l, t, base, M, options, vis);
           continue;
         }
         ctx.save();
         ctx.setTransform(...mul(base, M));
+        ctx.globalAlpha = vis;
         let params = parseParams(def, l.params);
         const fade = actionOffsets(spec, l.id, t)?.opacity ?? 0;
         if (fade && "opacity" in params) params = { ...params, opacity: (resolve(params.opacity, spec, t) as number) + fade };

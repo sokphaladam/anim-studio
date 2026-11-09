@@ -1,6 +1,6 @@
 // Pure, immutable scene edits. Unchanged frames keep their identity, so the engine's per-frame caches stay valid.
 import { apply, boneTip, compileActions, invert, layerMatrix, setTransformAt, skeleton, type SkeletonKind, type SkeletonOptions } from "@anim/engine";
-import type { Asset, AssetCheck, Cleanup, DrawingFrame, IK, KeyEase, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
+import type { Asset, AssetCheck, CinematicShot, Cleanup, DrawingFrame, IK, KeyEase, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
 
 type Pt = [number, number];
 type Transform = NonNullable<Layer["transform"]>;
@@ -429,3 +429,20 @@ export const setShot = (spec: SceneSpec, id: string, patch: { plane?: Layer["pla
     }
     return next as Layer;
   });
+
+/** Shows `shot`'s clip in footage layer `id` (keeping its timing and trims). */
+export function replaceClip(spec: SceneSpec, id: string, shot: CinematicShot): SceneSpec {
+  if (!shot.footage) return spec;
+  return mapLayer(spec, id, (l) => ({ ...l, params: { ...l.params, ...shot.footage, shot: shot.id } }));
+}
+
+/** After a shot is redone: every footage layer showing it gets the new clip. */
+export const relinkShot = (spec: SceneSpec, shot: CinematicShot) => spec.layers.filter((l) => l.type === "footage" && l.params.shot === shot.id).reduce((s, l) => replaceClip(s, l.id, shot), spec);
+
+/** Puts a cinematic shot on the timeline: a footage layer on top of the scene, playing once from the shot's start. */
+export function placeShot(spec: SceneSpec, shot: CinematicShot): SceneSpec {
+  if (!shot.footage) return spec;
+  let id = `shot-${shot.id}`;
+  for (let n = 2; findLayer(spec, id); n++) id = `shot-${shot.id}-${n}`;
+  return { ...spec, layers: [...spec.layers, { id, type: "footage", params: { ...shot.footage, start: shot.start, trimIn: 0, trimOut: 0, loop: false, shot: shot.id } }] };
+}

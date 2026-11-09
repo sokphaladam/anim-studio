@@ -1,7 +1,7 @@
 import { comfyHealth, ollamaHealth, ollamaPull, type AIConfig, type Painter, type PullState } from "@anim/ai";
 import type { FastifyInstance } from "fastify";
 
-export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { url: string; dir: string }, swapped?: Painter, cloudVideo: string | null = null) {
+export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { url: string; dir: string }, swapped?: Painter, cloudVideo: string | null = null, cloudQuote: { budgetUsd: number; retries: number; usdBySeconds: Record<number, number | null> } | null = null) {
   let pull: PullState | null = null;
 
   /** Whether painted scenes can be made: the painter is installed (it starts on demand) or already running. A swapped-in painter (tests) reports what it can do. */
@@ -9,6 +9,7 @@ export function healthRoutes(app: FastifyInstance, config: AIConfig, painter: { 
   app.get("/api/health/painter", async () => ({
     ...(swapped ? { installed: true, running: true, video: !!swapped.animate, layered: !!(swapped.removeBackground && swapped.segment && swapped.inpaint) } : await comfyHealth(painter)),
     cloudVideo,
+    cloudQuote,
   }));
 
   app.get("/api/health", async () => {

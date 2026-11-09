@@ -8,6 +8,7 @@ import { BrushPresetsDocker } from "../dockers/BrushPresets";
 import { ColorDocker } from "../dockers/ColorDocker";
 import { HistoryDocker } from "../dockers/History";
 import { PartCheckDocker } from "../dockers/PartCheck";
+import { ResultsDocker } from "../dockers/Results";
 import { RigDocker } from "../dockers/Rig";
 import { FaceDocker } from "../dockers/Face";
 import { MotionDocker } from "../dockers/Motion";
@@ -116,6 +117,7 @@ export function Editor() {
       motion: () => <div className="h-full overflow-auto bg-panel"><MotionDocker /></div>,
       look: () => <div className="h-full overflow-auto bg-panel"><LookDocker /></div>,
       loop: () => <div className="h-full overflow-auto bg-panel"><LoopDocker /></div>,
+      results: () => <div className="h-full bg-panel"><ResultsDocker /></div>,
       ai: () => <div className="h-full bg-panel"><AIAssistantDocker ref={aiInput} /></div>,
     }),
     [extra],

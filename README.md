@@ -2,7 +2,7 @@
 
 A local, Krita-style 2D animation studio in the browser. The AI plans a layered lofi scene, paints each layer and sets it moving in a seamless loop; a deterministic TypeScript engine renders it. See `BRIEF.md` for the full plan.
 
-**Status: Milestone 7**: workspace and playback (M1), drawing (M2), AI scene generation with Ollama (M3), AI chat edits plus saved projects (M4), layered generation with rigged characters (M5), MP4 export (M6), and library growth: snow, fireflies, clouds, wall clock, bookshelf, an owl, two more brush presets and an optional cloud fallback (M7).
+**Status: Milestone 11**: workspace and playback (M1), drawing (M2), AI scene generation with Ollama (M3), AI chat edits plus saved projects (M4), layered generation with rigged characters (M5), MP4 export (M6), library growth and an optional cloud fallback (M7), then the hybrid plan in `docs/ANIM-STUDIO-HYBRID-ANIMATION-ARCHITECTURE.md`: a cloud video provider (Runway) beside the local video model (M8), one prompt making the editable scene plus optional cinematic AI shots (M9), quality checks, retries and a spend limit (M10), and a Results panel with clip-level editing and an AI-cut export (M11).
 
 ## Setup
 
@@ -52,6 +52,8 @@ The two browser scripts use Playwright's Chromium if installed (`npx playwright 
 | Shorts / Reels / TikTok | 1080×1920 | 30 |
 | Square | 1080×1080 | 30 |
 | Draft (fast) | 960×540 | 24 |
+
+The dialog offers three outputs: the **editable master** (the scene as the editor shows it), the **package** (below), and the **cinematic AI cut**: the scene's generated shots that weren't marked failed, joined in time order at the scene's size and 24 fps (`POST /api/export/cinematic {spec}`; timeline trims don't apply, each shot is used whole).
 
 A scene of another shape is letterboxed with black bars, never stretched. Progress is shown per frame; closing the dialog cancels. Files go to `data/exports/` (`EXPORTS_DIR`). From a script: `POST /api/export {spec, preset}` returns a `jobId`; follow `/api/jobs/<id>/events` for `progress` and `done` (with the file's `url`).
 
@@ -103,13 +105,31 @@ In the editor, generated groups and parts appear in the Layers docker indented u
 
 In the app: type an idea on the welcome screen (or in the AI assistant docker) and press Generate. Beats appear on the timeline first; the scene replaces the current one as an undoable step and starts playing. Layers made by the AI show a spark until you edit them.
 
+## Cinematic AI video (optional, paid when cloud)
+
+Tick **Cinematic AI video** on the welcome screen to also get video shots made from the same plan as the editable scene. The editable scene is always made first and stays the source of truth; shots are stored beside it (`spec.cinematic`), never as layers, so a failed or expensive shot can't break the scene. Each shot's first frame is the editable scene rendered at the shot's start (a fade-in is left out, so the clip doesn't start from black). The planner may pick up to two 4–10 s moments; with none, one shot covers the scene's first 10 s.
+
+The video model is the local one (`pnpm setup:painter --video`, Wan 2.2) or, opt-in, Runway: set `CLOUD_VIDEO_ENABLED=1` and `RUNWAY_API_KEY` in `.env` (the key stays in the server: never in the browser, projects, logs or job events). `RUNWAY_VIDEO_MODEL` is `seedance2_5` (default) or `kling_4`; clips are 720p and silent.
+
+**Cost.** Runway charges per second of video (seedance2_5 720p: 30 credits = $0.30 a second, 80-credit minimum; a real 4 s clip cost $1.20). The welcome screen quotes the price of a shot before you generate, from the list prices in `packages/ai/src/video.ts`. `RUNWAY_MAX_COST_USD` (default $5) caps a whole job, every shot and retry included: a shot whose quote is over what's left is refused before any task is made, and one whose Runway estimate is over (prices changed) is cancelled before it runs. Every started task counts against the limit, even if it fails.
+
+**Checks and retries.** Every clip is measured at five points (start, quarters, end): wrong length, wrong shape or blank frames fail it; a sudden change between frames (flicker, a jump cut) marks it for review. A failing shot is retried `RUNWAY_MAX_RETRIES` times (default 1); the best attempt is kept. A shot that never passes ends as **needs review** (made, with the reason) or **failed** (no usable clip), never silently as ready. These checks are deterministic: they can't judge identity, anatomy or whether the motion matches the prompt.
+
+**Results panel** (docked with Layers): the shots with status, model, cost, tries and review notes; **Add to timeline** places a shot as a footage layer playing once from its start, with Start / Trim in / Trim out fields and a menu to swap in another shot's clip; **Redo** remakes one shot (or **AI › Redo cinematic shots** all that failed or need review), and placed clips pick up the new video. The **Quality report** tab checks the editable scene (`POST /api/quality`: invalid references or rig fail; flagged parts, pivots far outside their part and mesh weights that don't add up to 1 need review) and lists each shot's own checks.
+
+**When things go wrong.** Losing the connection or a Runway rate limit while a clip renders doesn't fail it: the server keeps asking, waiting longer each time (up to a minute, or as long as Runway's `Retry-After` says), and gives up after 6 misses in a row. A rate-limited create is asked again up to 3 times (no task was made); any other failed create is never repeated, so a dropped request can't pay twice. A clip that isn't a valid video fails that shot with the reason and is retried; the editable scene is never touched. If the server stops while a paid task renders, the task is kept in `data/cloud-tasks.json`; on the next start its clip is collected into the image store and listed at `GET /api/video/recovered` (prompt, cost, frames), so a clip already paid for isn't lost. With `CLOUD_VIDEO_ENABLED` unset or `0`, no request goes to Runway even if a key is set.
+
+API: `POST /api/generate {…, cinematic: true}` adds `quality` and `shot` events after the scene; `POST /api/shots/retry {spec, ids?}` redoes shots without touching the scene; `GET /api/health/painter` reports `cloudVideo` and `cloudQuote`; `GET /api/video/recovered` lists clips collected after a restart.
+
+**Benchmark** (M12): `cd apps/server && npx tsx ../../scripts/bench-video.mts --models seedance2_5,kling_4,local` runs the same first frames and prompts through each model, quotes the total first (`--max-usd`, default 6) and writes timings, cost, clip checks and contact sheets to `docs/benchmarks/`. Results: `docs/benchmarks/VIDEO-BENCHMARK.md`.
+
 ## AI editing and projects
 
 With a scene open, the AI assistant docker edits it: "make the leaves fall faster", "make my bird fly left to right". The model returns a JSON Patch (RFC 6902) against the current spec (`packages/ai/src/edit.ts`, prompt `prompts/edit.md`); it's applied, validated, and the reply lists exactly which values changed. A broken patch is retried once with the errors, then the model writes the whole updated spec instead. Hand-drawn strokes are never sent to the model (each drawing is summarized with where it sits), so it animates drawings by adding a layer `transform` driven by new tracks. Each edit is one undo step. Toggle **New scene** to build a fresh scene from the docker instead.
 
-Projects are saved in SQLite: every save is a version row. The editor autosaves every 30 s once you change something, Ctrl+S saves now, and AI edits save themselves. Saved projects are listed on the welcome screen and survive restarts. If the server can't be reached, a backup is kept in the browser and offered on the welcome screen.
+Projects are saved in SQLite: every save is a version row. The editor autosaves every 30 s once you change something, Ctrl+S saves now, and AI edits save themselves. Saved projects are listed on the welcome screen and survive restarts; a card's **⋯ › Delete project…** deletes it and all its versions after a confirmation (stored images stay, since other projects may use them). If the server can't be reached, a backup is kept in the browser and offered on the welcome screen.
 
-API: `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `POST /api/projects/:id/edit` `{ instruction }` → `{ patch, spec, version }`, `POST /api/projects/:id/undo` (drops the latest version).
+API: `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `POST /api/projects/:id/edit` `{ instruction }` → `{ patch, spec, version }`, `POST /api/projects/:id/undo` (drops the latest version), `DELETE /api/projects/:id`.
 
 ## Drawing
 

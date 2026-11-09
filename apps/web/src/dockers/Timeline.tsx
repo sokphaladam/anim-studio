@@ -26,12 +26,21 @@ export type Row = {
   keyframes: number[];
   /** Drawing frames: start frame and whether it has strokes. */
   drawn: { frame: number; empty: boolean }[];
+  /** A clip that plays once (a placed cinematic shot): its first and last frame on the timeline. */
+  clip?: { from: number; to: number; label: string };
   /** The layer/overlay object itself (identity is used to tell whether the AI-made row was edited). */
   source: unknown;
 };
 
 /** AI-made and not edited since. */
 export const isAIRow = (r: Row, marks: Record<string, unknown>) => marks[r.key] === r.source;
+
+function clipOf(spec: SceneSpec, l: SceneSpec["layers"][number]): Row["clip"] {
+  const p = l.params as { start?: number; trimIn?: number; trimOut?: number; count?: number; fps?: number; loop?: boolean; shot?: string };
+  if (l.type !== "footage" || p.loop !== false || !p.count || !p.fps) return undefined;
+  const start = p.start ?? 0, len = Math.max(1 / p.fps, p.count / p.fps - (p.trimIn ?? 0) - (p.trimOut ?? 0));
+  return { from: frameNo(spec, start), to: Math.min(frameCount(spec), frameNo(spec, start + len)), label: p.shot ? `Shot ${p.shot}` : "Clip" };
+}
 
 /** Timeline/layers rows, top of the stack first. */
 export function rowsOf(spec: SceneSpec): Row[] {
@@ -54,6 +63,7 @@ export function rowsOf(spec: SceneSpec): Row[] {
         // a layer's own keys plus those of the actions that move it (a loop shows its first cycle)
         keyframes: keysFor([l.params, l.transform, (spec.actions ?? []).filter((a) => a.part === l.id).flatMap((a) => Object.values(a.tracks ?? {}).map((n) => `@${n}`))], l.params),
         drawn: (l.frames ?? []).map((f) => ({ frame: frameNo(spec, f.start), empty: f.strokes.length === 0 })).filter((d) => d.frame < n),
+        clip: clipOf(spec, l),
         source: l,
       }))
       .reverse(),
@@ -192,6 +202,11 @@ const Grid = memo(function Grid({ spec, rows, fw, selected, keyDrag, range, aiMa
               {isAIRow(r, aiMarks) && <Sparkles size={12} strokeWidth={1.5} className="ml-auto shrink-0 text-accent" aria-label="Made by AI" />}
             </button>
             <div data-scrub data-row={r.key} className={cx("relative", selected === r.key && "bg-accent-soft/40")} style={{ width: n * fw, backgroundImage: gridBg }}>
+              {r.clip && (
+                <span title={`${r.clip.label}: frames ${r.clip.from}–${r.clip.to}. Re-time and trim it in Results.`} className="absolute inset-y-1 flex items-center gap-1 truncate rounded-sm border border-accent bg-accent-soft px-1 text-micro text-fg-2" style={{ left: r.clip.from * fw, width: Math.max(fw, (r.clip.to - r.clip.from) * fw) }}>
+                  <Film size={10} strokeWidth={1.5} className="shrink-0" /> {r.clip.label}
+                </span>
+              )}
               {/* held exposures: a bar from each drawing until the next one */}
               {drawn.map((d, i) => (
                 <span key={`h${d.frame}`} aria-hidden className="absolute inset-y-1.5 rounded-sm bg-raised" style={{ left: d.frame * fw + 1, width: ((drawn[i + 1]?.frame ?? n) - d.frame) * fw - 2 }} />

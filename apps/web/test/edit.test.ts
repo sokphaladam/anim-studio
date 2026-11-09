@@ -2,7 +2,7 @@ import { apply, layerMatrix, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addGaze, setCamera, setLook, setShot, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { addGaze, setCamera, setLook, setShot, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke, mapLayer, placeShot, relinkShot, replaceClip } from "../src/store/edit";
 import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
@@ -407,5 +407,21 @@ describe("look and shot edits (M12)", () => {
     expect(s.layers[1].clip).toBe("wall");
     valid(s);
     expect("plane" in setShot(s, "wall", { plane: null }).layers[0]).toBe(false);
+  });
+});
+
+describe("cinematic shots on the timeline", () => {
+  const shot = (id: string, frames: string) => ({ id, start: 2, end: 6, footage: { frames, count: 96, fps: 24 }, status: "ready" as const, checks: [], attempts: 1, source: "fake", prompt: "" });
+  it("places a shot once from its start, replaces its clip keeping the timing, and relinks it after a redo", () => {
+    let s = placeShot(blankScene("16:9"), shot("a", "/api/images/aaa/"));
+    s = placeShot(s, shot("a", "/api/images/aaa/"));
+    expect(s.layers.slice(-2).map((l) => l.id)).toEqual(["shot-a", "shot-a-2"]);
+    expect(s.layers.at(-2)!.params).toMatchObject({ frames: "/api/images/aaa/", start: 2, loop: false, shot: "a" });
+    s = mapLayer(s, "shot-a", (l) => ({ ...l, params: { ...l.params, start: 1, trimIn: 0.5 } }));
+    s = replaceClip(s, "shot-a-2", shot("b", "/api/images/bbb/"));
+    expect(s.layers.at(-1)!.params).toMatchObject({ frames: "/api/images/bbb/", shot: "b", start: 2 });
+    s = relinkShot(s, shot("a", "/api/images/new/"));
+    expect(s.layers.at(-2)!.params).toMatchObject({ frames: "/api/images/new/", start: 1, trimIn: 0.5 });
+    expect(s.layers.at(-1)!.params.frames).toBe("/api/images/bbb/");
   });
 });

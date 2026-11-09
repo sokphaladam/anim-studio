@@ -1,7 +1,7 @@
 import type { CinematicShot, SceneSpec } from "@anim/spec";
 import { useStudio } from ".";
 import { requestEdit, saveProject } from "./projects";
-import { profilesOf } from "./edit";
+import { profilesOf, relinkShot } from "./edit";
 import { overlayKey } from "./scenes";
 
 /** Layered generation's stages, in pipeline order. */
@@ -186,7 +186,9 @@ function onShotEvents(on: On) {
     update({ assets: list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a] });
     const st = useStudio.getState();
     if (!d.shot || !st.spec) return;
-    st.commit("AI cinematic shot", { ...st.spec, cinematic: [...(st.spec.cinematic ?? []).filter((c) => c.id !== d.id), d.shot] });
+    // a redone shot also replaces its clip wherever it was placed on the timeline
+    const next = d.shot.footage ? relinkShot(st.spec, d.shot) : st.spec;
+    st.commit("AI cinematic shot", { ...next, cinematic: [...(st.spec.cinematic ?? []).filter((c) => c.id !== d.id), d.shot] });
     saveProject("AI cinematic shot").catch(() => {});
     const cost = d.shot.costUsd !== undefined ? `, about $${d.shot.costUsd.toFixed(2)}` : "";
     const tries = d.shot.attempts > 1 ? ` after ${d.shot.attempts} tries` : "";
@@ -202,15 +204,15 @@ function onShotEvents(on: On) {
 }
 
 /** Redoes only the cinematic shots that failed or need review, from their saved prompts; the editable scene is untouched. */
-export async function redoShots() {
+export async function redoShots(ids?: string[]) {
   const s = useStudio.getState();
   const spec = s.spec;
-  if (!spec?.cinematic?.some((c) => c.status !== "ready") || s.generation?.status === "running") return;
+  if (!spec?.cinematic?.some((c) => (ids ? ids.includes(c.id) : c.status !== "ready")) || s.generation?.status === "running") return;
   s.set({ generation: { jobId: null, status: "running", phase: "cinematic", tokens: 0, message: "Redoing cinematic shots…", attempt: 0 } });
-  say({ role: "user", text: "Redo the cinematic shots that failed or need review" });
+  say({ role: "user", text: ids ? `Redo cinematic shot ${ids.join(", ")}` : "Redo the cinematic shots that failed or need review" });
   let jobId: string;
   try {
-    const res = await fetch("/api/shots/retry", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec }) });
+    const res = await fetch("/api/shots/retry", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, ids }) });
     const body = (await res.json()) as { jobId?: string; error?: string; fix?: string };
     if (!res.ok || !body.jobId) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
     jobId = body.jobId;

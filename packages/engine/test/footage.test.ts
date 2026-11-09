@@ -35,3 +35,21 @@ it("plays frame by frame, loops, and crossfades the end into the start", () => {
   expect(red(0.9)).toBeGreaterThan(100);
   expect(red(0.9)).toBeLessThan(125);
 });
+
+it("a placed clip plays once in its window, trimmed, over the layers below", () => {
+  // starts at 0.5 s, skips 0.2 s of the clip and cuts 0.3 s off its end: frames 2–6 play from 0.5 s to 1 s
+  const r = validateScene({ version: 1, meta: { title: "shot", duration: 2, fps: 30, width: 4, height: 4 }, layers: [
+    { id: "bg", type: "paper", params: { color: "#0000ff" } },
+    { id: "v", type: "footage", params: { frames, count: 10, fps: 10, start: 0.5, trimIn: 0.2, trimOut: 0.3, loop: false, shot: "scene" } },
+  ] });
+  if (!r.ok) throw new Error(r.errors.join("\n"));
+  const px = (t: number) => {
+    const c = createCanvas(4, 4);
+    createRenderer(c, r.spec, { createCanvas: (w, h) => createCanvas(w, h) }).render(t);
+    return [...c.getContext("2d").getImageData(1, 1, 1, 1).data.slice(0, 3)];
+  };
+  expect(px(0.2)[2]).toBeGreaterThan(200); // before it: the paper
+  expect(px(0.55)).toEqual([50, 0, 0]); // frame 2
+  expect(px(0.95)).toEqual([150, 0, 0]); // frame 6
+  expect(px(1.2)[2]).toBeGreaterThan(200); // after it: the paper again, no loop
+});

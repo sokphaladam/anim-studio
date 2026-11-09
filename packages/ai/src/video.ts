@@ -34,6 +34,8 @@ export interface VideoProvider {
   createTask(request: VideoGenerationRequest, signal?: AbortSignal): Promise<VideoTask>;
   getTask(task: VideoTask, signal?: AbortSignal): Promise<VideoGenerationResult>;
   cancelTask(task: VideoTask): Promise<void>;
+  /** The expected price in USD before any task is made, when the provider's price list is known. */
+  estimateUsd?(request: Pick<VideoGenerationRequest, "durationSeconds" | "resolution">): number;
 }
 
 /** Pinned models the adapter knows the request shape of; others are refused rather than guessed. */
@@ -42,6 +44,11 @@ const RATIO = { "720p": { "16:9": "1280:720", "9:16": "720:1280", "1:1": "960:96
 const STATUS: Record<string, VideoTask["status"]> = { PENDING: "queued", THROTTLED: "queued", RUNNING: "running", SUCCEEDED: "succeeded", FAILED: "failed", CANCELLED: "cancelled" };
 /** Runway API credits are billed at $0.01 each. */
 const USD_PER_CREDIT = 0.01;
+/**
+ * List prices: credits per second of output (image to video, no input video) and the minimum per task.
+ * shortcut: copied from docs.dev.runwayml.com/guides/pricing on 2026-11-10; update when Runway changes prices.
+ */
+const PRICE = { seedance2_5: { "720p": 30, "1080p": 68, min: 80 }, kling_4: { "720p": 15.7, "1080p": 23.5, min: 0 } } as const;
 
 /** Runway Dev API (image to video). Server-only: the key must never reach the browser, projects, logs or job events. */
 export function runway(opts: { apiKey: string; model: string; baseUrl?: string }): VideoProvider {
@@ -49,18 +56,30 @@ export function runway(opts: { apiKey: string; model: string; baseUrl?: string }
   const base = opts.baseUrl ?? "https://api.dev.runwayml.com";
   const headers = { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json", "x-runway-version": "2024-11-06" };
   async function call(method: string, path: string, body?: unknown, signal?: AbortSignal) {
-    const res = await fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    let res: Response;
+    try {
+      res = await fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      // offline, DNS, refused: status 0, so polling treats it like a brief outage
+      const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+      throw Object.assign(new AIError(`Can't reach Runway (${cause?.code ?? cause?.message ?? (e as Error).message})`, "Check the internet connection; the editable scene is unaffected"), { status: 0 });
+    }
     if (res.ok) return res.status === 204 ? {} : ((await res.json()) as Record<string, unknown>);
     const text = (await res.text()).slice(0, 300);
-    throw Object.assign(new AIError(`Runway answered ${res.status}: ${text}`, res.status === 401 ? "Check RUNWAY_API_KEY in .env" : undefined), { status: res.status });
+    const retryAfter = Number(res.headers.get("retry-after")) || undefined;
+    const fix = res.status === 401 ? "Check RUNWAY_API_KEY in .env" : res.status === 429 ? "Runway is rate-limiting this key; try again in a minute" : undefined;
+    throw Object.assign(new AIError(`Runway answered ${res.status}: ${text}`, fix), { status: res.status, retryAfter });
   }
   const toTask = (r: Record<string, unknown>, prev?: VideoTask): VideoTask => {
     const credits = (r.estimatedCost as { credits?: number } | undefined)?.credits;
     return { provider: "runway", providerTaskId: String(r.id), model: opts.model, status: STATUS[String(r.status)] ?? prev?.status ?? "queued", estimatedCostUsd: credits != null ? credits * USD_PER_CREDIT : prev?.estimatedCostUsd };
   };
+  const price = PRICE[opts.model as keyof typeof PRICE];
   return {
     id: "runway",
     model: opts.model,
+    estimateUsd: (q) => Math.max(price.min, Math.ceil(price[q.resolution] * Math.round(q.durationSeconds))) * USD_PER_CREDIT,
     async createTask(q, signal) {
       // shortcut: inline data URI caps the frame at 5 MB; switch to /v1/uploads if larger first frames are needed
       const promptImage = `data:image/png;base64,${Buffer.from(q.firstFrame).toString("base64")}`;
@@ -95,26 +114,60 @@ export function runway(opts: { apiKey: string; model: string; baseUrl?: string }
  */
 export async function generateVideo(p: VideoProvider, q: VideoGenerationRequest, o: { signal?: AbortSignal; maxCostUsd?: number; pollMs?: number; timeoutMs?: number; onTask?: (t: VideoTask) => void } = {}): Promise<{ task: VideoTask; bytes: Uint8Array }> {
   const { signal, pollMs = 5000, timeoutMs = 20 * 60_000 } = o;
-  let task = await p.createTask(q, signal);
+  const over = (usd: number) => Object.assign(new AIError(`This video would cost about $${usd.toFixed(2)}, over the $${o.maxCostUsd!.toFixed(2)} left to spend`, "Raise RUNWAY_MAX_COST_USD or ask for a shorter clip"), { code: "budget" });
+  // priced up front from the list price, so a clip over the limit never becomes a task
+  const quote = p.estimateUsd?.(q);
+  if (o.maxCostUsd != null && quote != null && quote > o.maxCostUsd) throw over(quote);
+  const task = await createWithRetry(p, q, signal, pollMs);
+  // the provider's own estimate is the one billed: if it is over (prices changed), cancel before the task runs
+  if (o.maxCostUsd != null && (task.estimatedCostUsd ?? 0) > o.maxCostUsd) {
+    await p.cancelTask(task).catch(() => {});
+    throw over(task.estimatedCostUsd!);
+  }
+  return pollVideo(p, task, o);
+}
+
+/** A 429 on create means no task was made, so asking again is safe (a 5xx might have made one, so it is never retried). */
+async function createWithRetry(p: VideoProvider, q: VideoGenerationRequest, signal: AbortSignal | undefined, pollMs: number) {
+  for (let i = 0; ; i++) {
+    try {
+      return await p.createTask(q, signal);
+    } catch (e) {
+      const { status, retryAfter } = e as { status?: number; retryAfter?: number };
+      if (status !== 429 || i >= 3) throw e;
+      await sleep(Math.min(60_000, retryAfter ? retryAfter * 1000 : pollMs * 2 ** i), undefined, { signal });
+    }
+  }
+}
+
+/**
+ * Polls a created task to the end and downloads its MP4; cancels it on abort or timeout. Used right after creating a
+ * task, and after a restart for tasks that were still running then.
+ */
+export async function pollVideo(p: VideoProvider, task: VideoTask, o: { signal?: AbortSignal; pollMs?: number; timeoutMs?: number; onTask?: (t: VideoTask) => void } = {}): Promise<{ task: VideoTask; bytes: Uint8Array }> {
+  const { signal, pollMs = 5000, timeoutMs = 20 * 60_000 } = o;
   const stop = () => p.cancelTask(task).catch(() => {});
   try {
-    // shortcut: the estimate only exists once the task is queued; the task is cancelled before it runs, not priced up front
-    if (o.maxCostUsd != null && (task.estimatedCostUsd ?? 0) > o.maxCostUsd)
-      throw Object.assign(new AIError(`This video would cost about $${task.estimatedCostUsd!.toFixed(2)}, over the $${o.maxCostUsd.toFixed(2)} left to spend`, "Raise RUNWAY_MAX_COST_USD or ask for a shorter clip"), { code: "budget" });
     o.onTask?.(task);
     const end = Date.now() + timeoutMs;
     let misses = 0;
+    let retryAfter: number | undefined;
     for (;;) {
       if (Date.now() > end) throw new AIError("The cloud video took too long and was cancelled");
-      await sleep(pollMs, undefined, { signal });
+      // after a rate limit or an outage, wait longer each time (up to a minute), or as long as the provider asks
+      await sleep(Math.min(60_000, retryAfter ? retryAfter * 1000 : pollMs * 2 ** misses), undefined, { signal });
       let r: VideoGenerationResult;
       try {
         r = await p.getTask(task, signal);
         misses = 0;
+        retryAfter = undefined;
       } catch (e) {
-        // rate limits and brief outages: keep polling, but not forever
-        const status = (e as { status?: number }).status ?? 0;
-        if ((status === 429 || status >= 500) && ++misses < 5) continue;
+        // rate limits, brief outages and a lost connection: keep polling, but not forever
+        const status = (e as { status?: number }).status;
+        if ((status === 0 || status === 429 || (status ?? 0) >= 500) && ++misses < 6) {
+          retryAfter = (e as { retryAfter?: number }).retryAfter;
+          continue;
+        }
         throw e;
       }
       task = r.task;

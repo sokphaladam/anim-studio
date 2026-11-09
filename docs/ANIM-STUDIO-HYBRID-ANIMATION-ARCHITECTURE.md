@@ -416,6 +416,18 @@ The current README reports Milestone 7. Treat this dual-output feature as the ne
 
 **Acceptance:** user can edit the native layers, replace/re-time a generated video clip, save/reopen, and export both deliverables with correct media references.
 
+### Status (2026-11-10)
+
+M8–M11 are built; see the README's "Cinematic AI video" section for how they work. Where the build is smaller than this plan:
+
+- **Shots** come from the existing layered plan (0–2 `shots`, 4–10 s), not a separate `AnimationPlan`; there is no per-shot path choice (rigged / local / cloud), camera, last frame or reference images. One video model serves every shot: Runway when `CLOUD_VIDEO_ENABLED=1`, else local Wan 2.2. `VIDEO_PROVIDER` and `RUNWAY_VIDEO_QUALITY` don't exist (720p only).
+- **Video contract** has prompt, first frame, duration, aspect, resolution, seed and audio, plus a list-price `estimateUsd`; no last frame, references or negative prompt.
+- **Generation history** is kept on each shot (`spec.cinematic`: source, task id, cost, prompt, checks, attempts), not in a separate store; the plan isn't saved.
+- **Quality**: deterministic only (scene validity, flagged parts, pivots, mesh weights; clip duration, size, blank frames, flicker at five sample points). No vision-model, mask/halo or render-twice determinism checks. The scene report is computed on demand, not saved or packaged.
+- **Clips** on the editable timeline: start, trim and replace (number fields in Results; no dragging), no size/position controls beyond the layer's own; the AI cut ignores trims and export presets.
+- **Robustness** (M12): polling backs off on rate limits, outages and lost connections (honouring `Retry-After`, 6 misses); a rate-limited create is retried, other failed creates never are (Runway has no idempotency key, so a create whose answer was lost can't be told apart from one never made). Tasks running at a restart are journaled (`data/cloud-tasks.json`) and their clips collected on the next start (`GET /api/video/recovered`); they are not reattached to the job or shot that asked for them. Low-VRAM behaviour is untested beyond the 12 GB card (the server already unloads the language model before ComfyUI runs).
+- **Verified live** once (2026-11-10): a 4 s `seedance2_5` 720p clip from a rendered first frame, $1.20, 97 frames, downloaded and split locally; the budget refused it at a $1.00 cap before it ran.
+
 ### M12 — Benchmark and production hardening
 
 **Scope:** compare `seedance2_5`, `kling_4`, and local Wan 2.2 on the same test set; pick defaults by style/task, record cost/quality; test low VRAM, offline mode, rate limits, restarts and corrupt media.

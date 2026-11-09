@@ -1,4 +1,4 @@
-import { Button, CardPicker, Dialog } from "@anim/ui";
+import { Button, CardPicker, Dialog, cx } from "@anim/ui";
 import { CircleAlert, Download, Film, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStudio } from "../store";
@@ -24,7 +24,8 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [quality, setQuality] = useState<"final" | "balanced" | "draft">("final");
   const [fit, setFit] = useState<"cover" | "contain">("cover");
   // an MP4 alone, or the package for CR Content (MP4, manifest, scene, images, loop report)
-  const [kind, setKind] = useState<"mp4" | "package">("mp4");
+  const [kind, setKind] = useState<"mp4" | "package" | "cinematic">("mp4");
+  const hasShots = useStudio((s) => !!s.spec?.cinematic?.some((c) => c.footage && c.status !== "failed"));
   const projectId = useStudio((s) => s.projectId);
   const [st, setSt] = useState<State>({ phase: "idle" });
   const es = useRef<EventSource | null>(null);
@@ -41,7 +42,7 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (!spec) return;
     setSt({ phase: "running", frame: 0, total: 0 });
     try {
-      const res = await fetch(kind === "package" ? "/api/package" : "/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset, quality, fit, ...(kind === "package" && projectId ? { sceneId: projectId } : {}) }) });
+      const res = await fetch(kind === "package" ? "/api/package" : kind === "cinematic" ? "/api/export/cinematic" : "/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec, preset, quality, fit, ...(kind === "package" && projectId ? { sceneId: projectId } : {}) }) });
       const body = (await res.json()) as { jobId?: string; error?: string };
       if (!res.ok || !body.jobId) return setSt({ phase: "error", message: body.error ?? `Export failed (${res.status})` });
       const jobId = body.jobId;
@@ -112,12 +113,19 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       <fieldset disabled={st.phase === "running"} className="flex flex-col gap-3">
         <div role="radiogroup" aria-label="What to export" className="flex flex-col gap-1 text-sm text-fg-2">
           <label className="flex items-center gap-2">
-            <input type="radio" name="kind" checked={kind === "mp4"} onChange={() => setKind("mp4")} /> MP4 video
+            <input type="radio" name="kind" checked={kind === "mp4"} onChange={() => setKind("mp4")} /> Editable master: the scene as you see it, as MP4
           </label>
           <label className="flex items-center gap-2">
             <input type="radio" name="kind" checked={kind === "package"} onChange={() => setKind("package")} /> Package for CR Content: the silent MP4 with its manifest, the scene, its images and the loop check (ZIP)
           </label>
+          <label className={cx("flex items-center gap-2", !hasShots && "opacity-40")}>
+            <input type="radio" name="kind" disabled={!hasShots} checked={kind === "cinematic"} onChange={() => setKind("cinematic")} /> Cinematic AI cut: the generated shots joined into one MP4, at the scene's size{!hasShots && " (no shots yet)"}
+          </label>
         </div>
+        {kind === "cinematic" ? (
+          <p className="text-sm text-fg-2">Each shot is joined whole (timeline trims don't apply), in time order, at {meta ? `${meta.width}×${meta.height}` : "the scene's size"} and 24 fps.</p>
+        ) : (
+        <>
         <CardPicker
           label="Preset"
           columns={4}
@@ -159,6 +167,8 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             <option value="draft">Draft (no blur or glow; fastest)</option>
           </select>
         </label>
+        </>
+        )}
       </fieldset>
 
       {st.phase === "running" && (
@@ -166,7 +176,7 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           <div role="progressbar" aria-label="Export progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-1.5 overflow-hidden rounded-full bg-hover">
             <div className="h-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${pct}%` }} />
           </div>
-          <p className="font-mono text-micro text-fg-3">{st.stage === "check" ? "Checking the loop…" : st.stage === "pack" ? "Packing the scene and images…" : st.total ? `Frame ${st.frame} of ${st.total}` : "Loading images…"}</p>
+          <p className="font-mono text-micro text-fg-3">{st.stage === "check" ? "Checking the loop…" : st.stage === "pack" ? "Packing the scene and images…" : st.total ? `Frame ${st.frame} of ${st.total}` : kind === "cinematic" ? "Joining the shots…" : "Loading images…"}</p>
         </div>
       )}
       {st.phase === "done" && (

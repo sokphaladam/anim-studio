@@ -12,11 +12,13 @@ import { AUTOSAVE_KEY } from "./Editor";
 
 const ASPECT_ICON = { "16:9": RectangleHorizontal, "9:16": RectangleVertical, "1:1": Square } as const;
 
+type PainterHealth = { installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null; cloudQuote?: { budgetUsd: number; retries: number; usdBySeconds: Record<string, number | null> } | null };
+
 function usePainter() {
-  const [h, setH] = useState<{ installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null } | null>(null);
+  const [h, setH] = useState<PainterHealth | null>(null);
   useEffect(() => {
     fetch("/api/health/painter")
-      .then((r) => r.json() as Promise<{ installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null }>)
+      .then((r) => r.json() as Promise<PainterHealth>)
       .then(setH, () => setH({ installed: false, video: false, layered: false }));
   }, []);
   return h;
@@ -69,6 +71,14 @@ export function Welcome() {
   const [cinematic, setCinematic] = useState(false);
   // the video model shots would use: the configured cloud one, else the local one
   const shotModel = painter?.cloudVideo ?? (painter?.video ? "the local video model" : null);
+  // the price before paid work: the default shot is the scene's first 10 s (4 s at least, the shortest Runway makes)
+  const shotSeconds = Math.min(10, Math.max(4, Math.round(duration)));
+  const shotUsd = painter?.cloudQuote?.usdBySeconds[shotSeconds];
+  const cap = painter?.cloudQuote?.budgetUsd;
+  const quote =
+    cap === undefined ? null
+    : shotUsd != null && shotUsd > cap ? `about $${shotUsd.toFixed(2)} per ${shotSeconds} s shot, over the $${cap.toFixed(2)} limit: no shot will be made (raise RUNWAY_MAX_COST_USD)`
+    : `about $${shotUsd?.toFixed(2) ?? "?"} per ${shotSeconds} s shot, never more than $${cap.toFixed(2)} a scene with retries`;
   const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, cinematic: cinematic && !!shotModel }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
@@ -156,7 +166,7 @@ export function Welcome() {
               <Toggle pressed={cinematic} onPressedChange={setCinematic} label={`Also make a cinematic AI video clip from the same plan with ${shotModel}${painter?.cloudVideo ? " (paid cloud service)" : ""}`} icon={<Film size={16} strokeWidth={1.5} />}>
                 Cinematic AI video
               </Toggle>
-              <span className="font-mono text-micro text-fg-3">{painter?.cloudVideo ? `${shotModel} · paid, after the editable scene` : "local · several minutes per shot"}</span>
+              <span className="font-mono text-micro text-fg-3">{painter?.cloudVideo ? `${shotModel} · paid: ${quote ?? "price unknown"}` : "local · several minutes per shot"}</span>
             </div>
           )}
           <div className="flex gap-2">

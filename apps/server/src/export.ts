@@ -3,7 +3,7 @@ import { createRenderer, imageSources, registerImage, type Quality } from "@anim
 import type { SceneSpec } from "@anim/spec";
 import { createCanvas, GlobalFonts, loadImage } from "@napi-rs/canvas";
 import { spawn } from "node:child_process";
-import { readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { ffmpegBin } from "./images";
@@ -96,4 +96,42 @@ export async function exportMp4(spec: SceneSpec, preset: Preset, imagesDir: stri
     throw e;
   }
   return { frames: total, width, height, fps };
+}
+
+const CLIP_FRAMES = /^\/api\/images\/([a-f0-9]{24})\/$/;
+
+/**
+ * The cinematic AI cut: the scene's generated shots (failed ones left out) in time order, each fitted into the scene's
+ * frame, joined into one MP4. Shots are a separate deliverable, so footage-layer trims in the editable timeline don't apply.
+ */
+export async function exportCinematic(spec: SceneSpec, imagesDir: string, file: string, signal?: AbortSignal) {
+  const shots = (spec.cinematic ?? []).filter((s) => s.footage && s.status !== "failed").sort((a, b) => a.start - b.start);
+  if (!shots.length) throw new Error("There are no cinematic shots to export");
+  const fps = 24;
+  const [w, h] = [spec.meta.width, spec.meta.height].map((n) => Math.round(n / 2) * 2);
+  const inputs = shots.flatMap((s) => {
+    const m = CLIP_FRAMES.exec(s.footage!.frames);
+    if (!m || !existsSync(join(imagesDir, m[1], "001.jpg"))) throw new Error(`The frames of cinematic shot "${s.id}" are missing`);
+    return ["-framerate", String(s.footage!.fps), "-i", join(imagesDir, m[1], "%03d.jpg")];
+  });
+  const fit = shots.map((_, i) => `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p[v${i}]`);
+  const graph = `${fit.join(";")};${shots.map((_, i) => `[v${i}]`).join("")}concat=n=${shots.length}:v=1:a=0[out]`;
+  const tmp = `${file}.part`;
+  const enc = spawn(ffmpegBin, ["-v", "error", "-y", ...inputs, "-filter_complex", graph, "-map", "[out]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", "-f", "mp4", tmp], { stdio: ["ignore", "ignore", "pipe"] });
+  let err = "";
+  enc.stderr.on("data", (d: Buffer) => (err = (err + d).slice(-500)));
+  const stop = () => enc.kill();
+  signal?.addEventListener("abort", stop);
+  try {
+    const code = await new Promise<number | null>((ok) => enc.on("close", ok));
+    signal?.throwIfAborted();
+    if (code !== 0) throw new Error(`Encoding failed${err ? `: ${err.trim()}` : ""}`);
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  } finally {
+    signal?.removeEventListener("abort", stop);
+  }
+  return { frames: Math.round(shots.reduce((n, s) => n + s.footage!.count / s.footage!.fps, 0) * fps), width: w, height: h, fps, shots: shots.map((s) => s.id) };
 }

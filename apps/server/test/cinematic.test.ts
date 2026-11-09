@@ -8,10 +8,12 @@ import { afterAll, expect, it } from "vitest";
 import { buildApp } from "../src/app";
 import { createStore } from "../src/db";
 import { ffmpegBin } from "../src/images";
+import { probeMp4 } from "../src/package";
 import { PLAN, painter } from "./fake-painter";
 
 const dir = mkdtempSync(join(tmpdir(), "anim-cinematic-"));
 process.env.IMAGES_DIR = join(dir, "images");
+process.env.EXPORTS_DIR = join(dir, "exports");
 // real MP4s, so clips go through the same frame splitting and checks as a provider's: a 6 s test pattern (the default
 // shot of the 6 s plan) passes; a 6 s flat colour is blank and fails
 const make = (name: string, src: string) => (spawnSync(ffmpegBin, ["-v", "error", "-f", "lavfi", "-i", `${src}s=128x72:d=6:r=24`, "-pix_fmt", "yuv420p", join(dir, name)]), new Uint8Array(readFileSync(join(dir, name))));
@@ -50,6 +52,7 @@ const apps: ReturnType<typeof buildApp>[] = [];
 afterAll(async () => {
   for (const a of apps) await a.close();
   delete process.env.IMAGES_DIR;
+  delete process.env.EXPORTS_DIR;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -127,3 +130,31 @@ it("redoes only the shots that aren't ready, from their saved prompts", async ()
   expect(redo.map((e) => e.type)).not.toContain("done"); // no scene is rebuilt
   expect(final(redo)).toEqual([expect.objectContaining({ id: "scene", status: "ready", attempts: 1 })]);
 }, 60_000);
+
+it("places a shot on the editable timeline, re-timed and trimmed, saves and reopens it, and exports both deliverables", async () => {
+  const f = fakeVideo([good]);
+  const { app, events } = await start(f.p);
+  const ev = await events("/api/generate", REQ);
+  const [shot] = final(ev);
+  const scene = ev.find((e) => e.type === "done")!.data.spec as { layers: unknown[] };
+  // the clip as a footage layer over the native layers: from 1 s, 0.5 s trimmed off each end, played once
+  const clip = { id: "shot-scene", type: "footage", params: { ...shot.footage, start: 1, trimIn: 0.5, trimOut: 0.5, loop: false, shot: shot.id } };
+  const spec = { ...scene, layers: [...scene.layers, clip], cinematic: [shot] };
+  const saved = await app.inject({ method: "POST", url: "/api/projects", payload: { spec, label: "Shot placed" } });
+  expect(saved.statusCode).toBe(200);
+  const reopened = (await app.inject({ method: "GET", url: `/api/projects/${saved.json().id}` })).json().spec;
+  expect(reopened.layers.at(-1)).toMatchObject(clip);
+
+  const quality = (await app.inject({ method: "POST", url: "/api/quality", payload: { spec: reopened } })).json();
+  expect(quality.items.every((i: { status: string }) => i.status !== "fail")).toBe(true);
+
+  const exported = async (url: string, payload: Record<string, unknown>) => {
+    const done = (await events(url, payload)).find((e) => e.type === "done")!.data as { name: string };
+    return probeMp4(join(dir, "exports", done.name));
+  };
+  expect((await exported("/api/export", { spec: reopened, preset: "draft", quality: "draft" })).frames).toBe(6 * 24);
+  // the AI cut is the shot itself, untrimmed: 6 s at 24 fps, at the scene's 16:9 size
+  expect(await exported("/api/export/cinematic", { spec: reopened })).toMatchObject({ frames: 144, width: 1280, height: 720, codec: "h264" });
+  const none = await app.inject({ method: "POST", url: "/api/export/cinematic", payload: { spec: { ...reopened, cinematic: [] } } });
+  expect(none.statusCode).toBe(422);
+}, 120_000);

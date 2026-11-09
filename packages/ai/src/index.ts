@@ -12,4 +12,4 @@ export { findMotions, type PaintingInfo } from "./regions";
 export { directMotion, directionProblems, applyDirection, describeScene, charactersOf, DirectionSchema, type Direction } from "./director";
 export { paintView, type View, type ViewRequest, type ViewResult } from "./views";
 export { sceneChecks, clipChecks, worst, type QualityItem, type ClipStats } from "./quality";
-export { runway, generateVideo, RUNWAY_MODELS, type VideoProvider, type VideoTask, type VideoGenerationRequest, type VideoGenerationResult } from "./video";
+export { runway, generateVideo, pollVideo, RUNWAY_MODELS, type VideoProvider, type VideoTask, type VideoGenerationRequest, type VideoGenerationResult } from "./video";

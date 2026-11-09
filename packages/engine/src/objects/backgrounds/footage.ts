@@ -20,12 +20,24 @@ export const footage = defineObject({
     fps: z.number().positive(),
     /** Seconds the end blends into the start when the clip loops. */
     crossfade: z.number().min(0).default(0.6),
+    /** Scene second the clip starts at; before it the layer draws nothing. */
+    start: z.number().min(0).default(0),
+    /** Seconds cut from the clip's beginning and end. */
+    trimIn: z.number().min(0).default(0),
+    trimOut: z.number().min(0).default(0),
+    /** Repeat to fill the scene; off plays once, then draws nothing (a placed cinematic shot). */
+    loop: z.boolean().default(true),
+    /** The cinematic shot this clip shows, so redoing that shot replaces it here too. */
+    shot: z.string().optional(),
   }),
   draw(ctx, p, t, env) {
-    const len = p.count / p.fps;
-    const loops = env.spec.meta.duration > len + 1e-3;
-    const local = loops ? t % len : Math.min(t, len - 1e-6);
-    const frame = (s: number) => getImage(frameUrl(p.frames, Math.min(p.count - 1, Math.max(0, Math.floor(s * p.fps)))));
+    // the part of the clip that plays, at least one frame however it is trimmed
+    const len = Math.max(1 / p.fps, p.count / p.fps - p.trimIn - p.trimOut);
+    const u = t - p.start;
+    if (u < 0 || (!p.loop && u >= len)) return;
+    const loops = p.loop && env.spec.meta.duration - p.start > len + 1e-3;
+    const local = loops ? u % len : Math.min(u, len - 1e-6);
+    const frame = (s: number) => getImage(frameUrl(p.frames, Math.min(p.count - 1, Math.max(0, Math.floor((p.trimIn + s) * p.fps)))));
     const a = frame(local);
     if (!a) {
       ctx.fillStyle = "#15121c";

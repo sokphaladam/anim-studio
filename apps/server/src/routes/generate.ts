@@ -17,7 +17,7 @@ const VIDEO_FPS = 24;
 /** Per-call spend: a cap for this task, and a report of what each task it starts is estimated to cost. */
 export type SpendOpts = { maxCostUsd?: number; onCost?: (usd: number) => void };
 /** A video model run: the clip plus the provider task it came from. */
-export type CloudVideo = { name: string; animate: (args: Parameters<AnimateFn>[0], signal?: AbortSignal, spend?: SpendOpts) => Promise<{ footage: Footage; taskId?: string; costUsd?: number }> };
+export type CloudVideo = { name: string; estimateUsd?: (seconds: number) => number | undefined; animate: (args: Parameters<AnimateFn>[0], signal?: AbortSignal, spend?: SpendOpts) => Promise<{ footage: Footage; taskId?: string; costUsd?: number }> };
 /** What cinematic shots need from the host: the editable scene's frame at a time (PNG), clip measurements, and the repair policy. */
 export type ShotMedia = { frame: (spec: SceneSpec, t: number) => Promise<Uint8Array>; stats: (f: Footage) => Promise<ClipStats>; retries: number; budgetUsd: number };
 
@@ -80,7 +80,8 @@ export function generateRoutes(
           best = { ...best, review: `Not made: the $${media.budgetUsd.toFixed(2)} spend limit for this job was reached` };
           break;
         }
-        emit({ type: "status", phase: "cinematic", message: `Making the cinematic shot "${s.id}" with ${maker.name}${attempt > 1 ? ` (retry ${attempt - 1} of ${media.retries})` : ""}` });
+        const quote = maker.estimateUsd?.(s.end - s.start);
+        emit({ type: "status", phase: "cinematic", message: `Making the cinematic shot "${s.id}" with ${maker.name}${quote ? `, about $${quote.toFixed(2)}` : ""}${attempt > 1 ? ` (retry ${attempt - 1} of ${media.retries})` : ""}` });
         emit({ ...base, status: "running", attempt });
         let next: CinematicShot;
         let stop = false;

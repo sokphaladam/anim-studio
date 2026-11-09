@@ -1,6 +1,7 @@
 // Hybrid rigging: bone layers (FK through the ordinary parent chain), two-bone IK solved at render time, and image
 // meshes skinned to bones. Everything is a pure function of the scene and the time, so preview and export match.
 import type { IK, Layer, SceneSpec } from "@anim/spec";
+import { contactLevel } from "./actions";
 import { layerPivot } from "./bounds";
 import type { CanvasFactory } from "./drawing";
 import { defaultFactory, layerMatrix } from "./index";
@@ -62,7 +63,8 @@ export function solveIK(spec: SceneSpec, ik: IK, parent: Mat, upper: Pose, t: nu
   const r1 = clampBone(U, wrap(toward - ik.bend * bendAt - a1));
   const elbow: Pt = [J[0] + l1 * Math.cos(a1 + r1), J[1] + l1 * Math.sin(a1 + r1)];
   const r2 = clampBone(L, wrap(Math.atan2(ty - elbow[1], tx - elbow[0]) - r1 - a2));
-  const mix = Math.min(1, Math.max(0, resolve(ik.mix, spec, t) as number));
+  // a contact holds the limb on its target however the mix is set
+  const mix = Math.max(contactLevel(spec, ik.target, t), Math.min(1, Math.max(0, resolve(ik.mix, spec, t) as number)));
   return { upper: r1, lower: r2, mix };
 }
 

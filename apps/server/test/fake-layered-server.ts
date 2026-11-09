@@ -20,7 +20,16 @@ const slow: Painter = {
   segment: async (png, text) => wait(await painter.segment!(png, text)),
   inpaint: async (a) => wait(await painter.inpaint!(a)),
 };
-const provider: Provider = { name: "mock", model: "canned plan", generateJSON: async () => wait(JSON.stringify(PLAN)) };
+// the Motion Director gets a canned direction for the girl; everything else the canned layer plan
+const DIRECTION = {
+  summary: "She idles, looks at the clock, and listens.",
+  clips: [
+    { clip: "idle", character: "girl", start: 0 },
+    { clip: "look_at", character: "girl", start: 1, target: "clock", why: "the clock catches her eye" },
+    { clip: "listening", character: "girl", start: 2, end: 5 },
+  ],
+};
+const provider: Provider = { name: "mock", model: "canned plan", generateJSON: async (a) => wait(JSON.stringify(/motion director/i.test(a.system) ? DIRECTION : PLAN)) };
 const app = buildApp({ provider, painter: slow, store: createStore(join(dir, "e2e.db")), config: { provider: "openai-compatible", ollamaUrl: "", ollamaModel: "", fallback: { baseUrl: "http://127.0.0.1:9", apiKey: "x", model: "canned plan" } } });
 await app.listen({ port: Number(process.env.API_PORT ?? 8799), host: "127.0.0.1" });
 console.log(`fake layered API on ${process.env.API_PORT ?? 8799}, data in ${dir}`);

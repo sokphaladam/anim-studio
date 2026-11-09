@@ -1,6 +1,6 @@
 // Pure, immutable scene edits. Unchanged frames keep their identity, so the engine's per-frame caches stay valid.
 import { apply, boneTip, compileActions, invert, layerMatrix, setTransformAt, skeleton, type SkeletonKind, type SkeletonOptions } from "@anim/engine";
-import type { Asset, AssetCheck, Cleanup, DrawingFrame, IK, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
+import type { Asset, AssetCheck, Cleanup, DrawingFrame, IK, KeyEase, Layer, Mesh, SceneSpec, Stroke } from "@anim/spec";
 
 type Pt = [number, number];
 type Transform = NonNullable<Layer["transform"]>;
@@ -376,3 +376,23 @@ export const setSwitch = (spec: SceneSpec, id: string, patch: { keys?: [number, 
   ...spec,
   switches: spec.switches?.map((w) => (w.id === id ? { ...w, ...patch, ...(patch.keys && { keys: [...patch.keys].sort((a, b) => a[0] - b[0]) }) } : w)),
 });
+
+/** Sets the blend weight of every action of a clip. */
+export const setClipWeight = (spec: SceneSpec, clip: string, weight: number): SceneSpec => ({ ...spec, actions: spec.actions?.map((a) => (a.clip === clip ? { ...a, weight } : a)) });
+
+/** Sets (or with null removes) the ease of the segment that starts at key `index` of a track. */
+export function setKeyEase(spec: SceneSpec, track: string, index: number, ease: KeyEase | null): SceneSpec {
+  const tr = spec.tracks[track];
+  if (!tr?.keys[index]) return spec;
+  const keys = tr.keys.map((k, i) => (i !== index ? k : ease === null ? ([k[0], k[1]] as [number, number]) : ([k[0], k[1], ease] as [number, number, KeyEase])));
+  return { ...spec, tracks: { ...spec.tracks, [track]: { ...tr, keys } } };
+}
+
+/** The tracks that move a layer: its own animated transform values and its actions' tracks, labelled. */
+export function tracksOf(spec: SceneSpec, id: string): { name: string; label: string }[] {
+  const l = findLayer(spec, id);
+  if (!l) return [];
+  const own = Object.entries(l.transform ?? {}).flatMap(([k, v]) => (typeof v === "string" && v.slice(1) in spec.tracks ? [{ name: v.slice(1), label: k }] : []));
+  const acts = (spec.actions ?? []).filter((a) => a.part === id).flatMap((a) => Object.entries(a.tracks ?? {}).filter(([, n]) => n in spec.tracks).map(([ch, n]) => ({ name: n, label: `${a.clip ?? a.id} · ${ch}` })));
+  return [...own, ...acts];
+}

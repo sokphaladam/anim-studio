@@ -1,4 +1,5 @@
-import { AIError, editScene, type Provider } from "@anim/ai";
+import { AIError, directMotion, editScene, type Provider } from "@anim/ai";
+import { createCanvas } from "@napi-rs/canvas";
 import { validateScene } from "@anim/engine";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -6,6 +7,7 @@ import type { Store } from "../db";
 
 const Save = z.object({ spec: z.unknown(), label: z.string().trim().min(1).max(200).default("Saved"), chat: z.array(z.unknown()).max(1000).optional() });
 const Edit = z.object({ instruction: z.string().trim().min(2, "Say what to change").max(2000) });
+const Direct = z.object({ spec: z.unknown(), intent: z.string().trim().min(3, "Say what should happen").max(2000) });
 type Id = { Params: { id: string } };
 
 const bad = (reply: FastifyReply, error: string, errors?: string[]) => reply.code(400).send({ error, errors });
@@ -37,6 +39,25 @@ export function projectRoutes(app: FastifyInstance, store: Store, provider: () =
   app.post<Id>("/api/projects/:id/undo", async (req, reply) => {
     if (!store.get(req.params.id)) return missing(reply);
     return store.undo(req.params.id) ?? reply.code(409).send({ error: "Nothing to undo" });
+  });
+
+  /**
+   * Motion Director: plans motion clips for `intent` on the scene sent and answers with the plan and the new scene. Nothing
+   * is saved: the editor shows the plan for review and applies it as one undoable step.
+   */
+  app.post("/api/direct", async (req, reply) => {
+    const b = Direct.safeParse(req.body);
+    if (!b.success) return bad(reply, b.error.issues[0].message);
+    const v = validateScene(b.data.spec);
+    if (!v.ok) return bad(reply, "Invalid scene", v.errors);
+    const ac = new AbortController();
+    reply.raw.on("close", () => !reply.raw.writableFinished && ac.abort());
+    try {
+      return await directMotion(v.spec, b.data.intent, provider(), { signal: ac.signal, make: (w, h) => createCanvas(w, h) });
+    } catch (e) {
+      if (e instanceof AIError) return reply.code(422).send({ error: e.message, fix: e.fix });
+      throw e;
+    }
   });
 
   /** Edits the latest saved version (the editor saves first). */

@@ -18,11 +18,22 @@ export const num = z.union([z.number(), trackRef]);
 /** A hex color or a "$palette" reference. */
 export const color = z.union([hex, paletteRef]);
 
-export const EaseSchema = z.enum(["linear", "inOut", "in", "out", "step"]);
+/**
+ * How a value moves between two keys. anticipate: pulls back a little first · overshoot: goes a little past, then back ·
+ * settle: overshoots and wobbles to rest · step: holds, then jumps.
+ */
+export const EaseSchema = z.enum(["linear", "inOut", "in", "out", "step", "anticipate", "overshoot", "settle"]);
+/**
+ * A cubic Bézier curve [x1, y1, x2, y2] like CSS cubic-bezier(): the two handles of the curve from (0,0) to (1,1). The
+ * y handles may leave 0–1 for anticipation (below 0) and overshoot (above 1), within limits that keep motion believable.
+ */
+export const BezierSchema = z.tuple([z.number().min(0).max(1), z.number().min(-1).max(2), z.number().min(0).max(1), z.number().min(-1).max(2)]);
+export const KeyEaseSchema = z.union([EaseSchema, BezierSchema]);
 
 export const TrackSchema = z
   .object({
-    keys: z.array(z.tuple([z.number().min(0), z.number()])).min(1),
+    /** [time, value] or [time, value, ease]: a key's own ease shapes the move from it to the next key (else the track's). */
+    keys: z.array(z.union([z.tuple([z.number().min(0), z.number()]), z.tuple([z.number().min(0), z.number(), KeyEaseSchema])])).min(1),
     ease: EaseSchema.default("inOut"),
     /** Repeat forever: time is taken modulo the last key's time, so the keys are one cycle. */
     loop: z.boolean().optional(),
@@ -169,11 +180,15 @@ export const CharacterProfileSchema = z.object({
  * points and back). Loops for the whole scene: breathe, bob (nod to music), blink (show an eyes-closed overlay),
  * sway (rock about the pivot), drift (glide sideways and back), swing (reach toward target and back, e.g. sipping).
  * gaze (one-shot): slide the irises a little toward the target and hold, without turning the head.
+ * Live (evaluated every frame from absolute time, no tracks): follow (secondary motion: trail behind the parent and
+ * swing past, for hair, tails, ears, cloth, hanging things), attach (from start to end, be carried along by the target,
+ * e.g. a cup in a hand or a cat on a branch). contact: hold an IK limb on its target from start to end.
+ * motion: keyed x/y offsets a clip made (a reach's path); its tracks are its own and edited like any keys.
  */
-export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing", "gaze"] as const;
+export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing", "gaze", "follow", "attach", "contact", "motion"] as const;
 /** flip: 1 mirrors the part left-right about its pivot (a walker turning around), 0 leaves it as painted. */
 export const ACTION_CHANNELS = ["x", "y", "rotation", "scale", "opacity", "flip"] as const;
-const LOOPS = new Set(["breathe", "bob", "blink", "sway", "drift", "swing"]);
+const LOOPS = new Set(["breathe", "bob", "blink", "sway", "drift", "swing", "follow"]);
 export const isLoopAction = (type: string) => LOOPS.has(type);
 
 /**
@@ -199,6 +214,12 @@ export const ActionSchema = z.object({
   period: z.number().positive().optional(),
   /** path: where the part's pivot travels, in scene coordinates; the first point is where it rests. */
   points: z.array(z.tuple([z.number(), z.number()])).min(2).optional(),
+  /** Blend weight: scales what the action adds (0 = off; default 1 = as made). A "@track" fades it in and out. */
+  weight: num.optional(),
+  /** Loops: where in its cycle it starts (0–1), so a chain (a tail) can move as a wave. */
+  phase: z.number().min(0).max(1).optional(),
+  /** The motion clip this action is part of (a walk cycle moves several bones): edited and removed together. */
+  clip: z.string().min(1).optional(),
   /** Filled in by compiling: channel → track name. */
   tracks: z.partialRecord(z.enum(ACTION_CHANNELS), z.string()).optional(),
 });
@@ -339,11 +360,14 @@ export const SceneSpecSchema = z
       if (actionIds.has(a.id)) at("id", `Duplicate action id "${a.id}"`);
       actionIds.add(a.id);
       if (!seen.has(a.part)) at("part", `Unknown layer "${a.part}"`);
-      const aims = a.type === "look_at" || a.type === "swing" || a.type === "gaze";
+      const aims = a.type === "look_at" || a.type === "swing" || a.type === "gaze" || a.type === "attach";
       if (aims && a.target === undefined) at("target", `A ${a.type} needs a target layer`);
       if (a.target !== undefined && !seen.has(a.target)) at("target", `Unknown target layer "${a.target}"`);
       if (a.target === a.part) at("target", "A part can't aim at itself");
-      if ((a.type === "look_at" || a.type === "gaze") && a.end === undefined) at("end", `A ${a.type} needs an end time`);
+      if ((a.type === "look_at" || a.type === "gaze" || a.type === "attach" || a.type === "contact") && a.end === undefined) at("end", `A ${a.type} needs an end time`);
+      if (a.type === "follow" && byId.get(a.part)?.parent === undefined) at("part", "A follow needs a part with a parent to trail behind");
+      if (a.type === "attach" && a.target !== undefined && under(a.target, a.part)) at("target", "A part can't be carried by something attached to it");
+      if (a.type === "contact" && !s.ik?.some((k) => k.target === a.part)) at("part", `"${a.part}" is not the target of an IK chain`);
       if (a.type === "path" && !a.points) at("points", "A path needs at least 2 points");
       if (a.end !== undefined && a.end <= a.start) at("end", `End ${a.end}s must be after start ${a.start}s`);
       if (a.end !== undefined && a.end > dur) at("end", `End ${a.end}s is past the ${dur}s duration`);

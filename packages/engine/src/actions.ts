@@ -1,7 +1,7 @@
 import { type Action, type Layer, type SceneSpec, type Track } from "@anim/spec";
 import { layerPivot, objectBounds, type Box } from "./bounds";
 import { defaultFactory, layerMatrix } from "./index";
-import { apply, invert } from "./matrix";
+import { apply, invert, type Mat } from "./matrix";
 import { resolve } from "./resolve";
 import { evalTrack } from "./tracks";
 import type { CanvasFactory } from "./drawing";
@@ -16,6 +16,11 @@ type Keys = [number, number][];
 /** What a layer covers in its own coordinates: image params directly, anything else by rendering it. */
 function boxOf(spec: SceneSpec, l: Layer, t: number, make: CanvasFactory): Box | null {
   const p = l.params;
+  // a bone draws nothing: it covers the line from its joint to its end
+  if (l.type === "bone" && l.pivot) {
+    const [x0, y0] = l.pivot, [x1, y1] = tipOf(l);
+    return [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+  }
   if (l.type === "image" && [p.x ?? 0, p.y ?? 0, p.w, p.h].every((v) => typeof v === "number")) {
     const x = (p.x as number | undefined) ?? 0, y = (p.y as number | undefined) ?? 0;
     return [x, y, x + (p.w as number), y + (p.h as number)];
@@ -127,7 +132,7 @@ export function actionTracks(spec: SceneSpec, a: Action, make: CanvasFactory = d
   const D = spec.meta.duration, k = a.amount;
   const loop = (p: number, keys: (p: number) => Keys, ease: Track["ease"] = "inOut"): Track => {
     const P = fitPeriod(p, D);
-    return { keys: keys(P), ease, loop: true };
+    return { keys: shiftLoop(keys(P), P, a.phase ?? 0, ease), ease, loop: true };
   };
   switch (a.type) {
     case "look_at":
@@ -147,6 +152,14 @@ export function actionTracks(spec: SceneSpec, a: Action, make: CanvasFactory = d
     case "blink":
       // eyes shut for a fifth of a second (a slow blink for amount > 1), once per cycle
       return { opacity: loop(a.period ?? 4, (p) => { const c = Math.min(p / 3, 0.2 * k); return [[0, 0], [p - c - 0.08, 0], [p - c, 1], [p - 0.08, 1], [p, 0]]; }, "linear") };
+    // evaluated live every frame (see actionOffsets and the IK solver), so they compile to nothing
+    case "follow":
+    case "attach":
+    case "contact":
+      return {};
+    // keys made by a clip: kept as they are
+    case "motion":
+      return Object.fromEntries(Object.entries(a.tracks ?? {}).flatMap(([ch, name]) => (spec.tracks[name] ? [[ch, spec.tracks[name]]] : [])));
     case "gaze": {
       const [dx, dy] = gazeShift(spec, a, make);
       return { x: { keys: holdKeys(spec, a, dx), ease: a.ease }, y: { keys: holdKeys(spec, a, dy), ease: a.ease } };
@@ -175,17 +188,132 @@ export function compileActions(spec: SceneSpec, make: CanvasFactory = defaultFac
   return out;
 }
 
-/** What a layer's actions add to each channel at time t; null when no action moves it. */
-export function actionOffsets(spec: SceneSpec, layerId: string, t: number): Record<Channel, number> | null {
+/** One loop cycle of keys started `phase` (0-1) of the way in: the same motion, shifted, still closing at both ends. */
+function shiftLoop(keys: Keys, P: number, phase: number, ease: Track["ease"]): Keys {
+  if (!phase || P <= 0) return keys;
+  const tr: Track = { keys, ease, loop: true };
+  const off = phase * P;
+  const inside = keys.map(([k]) => (((k - off) % P) + P) % P).filter((k) => k > 1e-9 && k < P - 1e-9);
+  return [0, ...[...new Set(inside)].sort((x, y) => x - y), P].map((k) => [+k.toFixed(6), evalTrack(tr, k + off)] as [number, number]);
+}
+
+/** What a layer's actions add to each channel at time t (each scaled by its weight); null when no action moves it. */
+export function actionOffsets(spec: SceneSpec, layerId: string, t: number, make: CanvasFactory = defaultFactory): Record<Channel, number> | null {
   let o: Record<Channel, number> | null = null;
-  for (const a of spec.actions ?? [])
-    if (a.part === layerId && a.tracks)
-      for (const [ch, name] of Object.entries(a.tracks ?? {}) as [Channel, string][]) {
-        const tr = spec.tracks[name];
-        o ??= { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, flip: 0 };
-        if (tr) o[ch] += evalTrack(tr, t);
+  for (const a of spec.actions ?? []) {
+    if (a.part !== layerId) continue;
+    const w = a.weight === undefined ? 1 : (resolve(a.weight, spec, t) as number);
+    if (a.type === "follow" || a.type === "attach") {
+      o ??= { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, flip: 0 };
+      if (a.type === "follow") o.rotation += w * followTurn(spec, a, t, make);
+      else {
+        const [dx, dy] = carried(spec, a, t, make);
+        o.x += w * dx;
+        o.y += w * dy;
       }
+      continue;
+    }
+    for (const [ch, name] of Object.entries(a.tracks ?? {}) as [Channel, string][]) {
+      const tr = spec.tracks[name];
+      o ??= { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, flip: 0 };
+      // a mirror is on or off: it isn't blended
+      if (tr) o[ch] += ch === "flip" ? evalTrack(tr, t) : w * evalTrack(tr, t);
+    }
+  }
   return o;
+}
+
+/** Largest secondary swing (radians) at amount 1. */
+const MAX_FOLLOW = 0.6;
+const FOLLOW_SAMPLES = 24;
+const angleOf = (m: Mat) => Math.atan2(m[1], m[0]);
+type Pt = [number, number];
+/** Where a bone ends, in its own coordinates. */
+const tipOf = (l: Layer): Pt => {
+  const [x, y] = l.pivot ?? [0, 0];
+  const len = l.params.length as number, ang = (l.params.angle as number | undefined) ?? 0;
+  return [x + len * Math.cos(ang), y + len * Math.sin(ang)];
+};
+
+/**
+ * Secondary motion: how far a part trails behind what drives it at time t, and swings past when that stops. The driver is
+ * the nearest ancestor that doesn't itself follow; parts further down a chain (a tail's tip) lag more. The response is a
+ * damped oscillation of the driver's recent turning and travel, sampled at fixed times back from t (no state carried
+ * between frames), with time wrapped around the scene's length: the video loops, so the motion joins at the seam.
+ */
+function followTurn(spec: SceneSpec, a: Action, t: number, make: CanvasFactory): number {
+  const byId = (id: string | undefined) => (id === undefined ? undefined : spec.layers.find((l) => l.id === id));
+  const part = byId(a.part);
+  let driver = byId(part?.parent), depth = 0;
+  while (driver && spec.actions?.some((x) => x.type === "follow" && x.part === driver!.id) && depth < spec.layers.length) {
+    driver = byId(driver.parent);
+    depth++;
+  }
+  if (!part || !driver) return 0;
+  const D = spec.meta.duration;
+  const P = a.period ?? 1.2, decay = P / 2, lag = 1 + 0.5 * depth;
+  const step = (2 * P * lag) / FOLLOW_SAMPLES;
+  // the part's joint and which way it points, in its own coordinates
+  const [px, py] = layerPivot(spec, part, make);
+  const b = part.type === "bone" ? null : boxOf(spec, part, 0, make);
+  const tip: Pt = part.type === "bone" ? tipOf(part) : b ? center(b) : [px, py + 1];
+  const L = Math.hypot(tip[0] - px, tip[1] - py) || 1;
+  const sample = (time: number) => {
+    const m = layerMatrix(spec, driver!, ((time % D) + D) % D, make);
+    return { turn: angleOf(m), joint: apply(m, px, py), tip: apply(m, ...tip) };
+  };
+  const now = sample(t);
+  const dir: Pt = [(now.tip[0] - now.joint[0]) / L, (now.tip[1] - now.joint[1]) / L];
+  let sum = 0, norm = 0;
+  for (let k = 1; k <= FOLLOW_SAMPLES; k++) {
+    const back = k * step;
+    const fade = Math.exp(-back / (decay * lag));
+    const then = sample(t - back);
+    // turning: lag behind the driver's rotation; travel: the tip stays toward where the joint was
+    const turn = Math.atan2(Math.sin(then.turn - now.turn), Math.cos(then.turn - now.turn));
+    const dx = then.joint[0] - now.joint[0], dy = then.joint[1] - now.joint[1];
+    const travel = (-dir[1] * dx + dir[0] * dy) / L;
+    sum += fade * Math.cos((2 * Math.PI * back) / (P * lag)) * (turn + travel);
+    norm += fade;
+  }
+  const max = MAX_FOLLOW * a.amount;
+  return Math.max(-max, Math.min(max, (a.amount * sum) / (norm || 1)));
+}
+
+/** Where an attach's target point is in the scene at t: a bone's end, else the target's pivot. */
+function anchor(spec: SceneSpec, target: Layer, t: number, make: CanvasFactory): Pt {
+  const p: Pt = target.type === "bone" && target.pivot ? tipOf(target) : layerPivot(spec, target, make);
+  return apply(layerMatrix(spec, target, t, make), ...p);
+}
+
+/**
+ * How far an attach has carried its part at t, in the part's parent space: the target point's travel since the attach
+ * began (nothing before it; held where it was let go after it). Relative, so the part never jumps onto its target.
+ */
+function carried(spec: SceneSpec, a: Action, t: number, make: CanvasFactory): Pt {
+  const part = spec.layers.find((l) => l.id === a.part), target = spec.layers.find((l) => l.id === a.target);
+  if (!part || !target || t <= a.start) return [0, 0];
+  const at = Math.min(t, a.end ?? spec.meta.duration);
+  const [x0, y0] = anchor(spec, target, a.start, make), [x1, y1] = anchor(spec, target, at, make);
+  const parent = part.parent === undefined ? null : (spec.layers.find((l) => l.id === part.parent) ?? null);
+  const inv = invert(layerMatrix(spec, parent, t, make));
+  return [inv[0] * (x1 - x0) + inv[2] * (y1 - y0), inv[1] * (x1 - x0) + inv[3] * (y1 - y0)];
+}
+
+/** Seconds a contact takes to take hold and to let go, around its start and end. */
+const CONTACT_EASE = 0.15;
+
+/** How firmly contacts hold an IK target at t (0-1): 1 from start to end, easing in and out around them. */
+export function contactLevel(spec: SceneSpec, target: string, t: number): number {
+  let level = 0;
+  for (const a of spec.actions ?? []) {
+    if (a.type !== "contact" || a.part !== target) continue;
+    const end = a.end ?? spec.meta.duration;
+    const k = t < a.start ? 1 - (a.start - t) / CONTACT_EASE : t > end ? 1 - (t - end) / CONTACT_EASE : 1;
+    const w = a.weight === undefined ? 1 : (resolve(a.weight, spec, t) as number);
+    level = Math.max(level, Math.max(0, Math.min(1, k)) * w);
+  }
+  return level;
 }
 
 

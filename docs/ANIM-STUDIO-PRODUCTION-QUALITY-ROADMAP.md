@@ -189,6 +189,29 @@ Acceptance criteria:
 - No action silently targets a missing layer or unsupported joint.
 - AI motion generation produces a reviewable plan and one undoable edit, not dozens of opaque changes.
 
+**Status (November 9, 2026): implemented, except where noted.**
+
+- **Curves:** a key may carry its own ease for the segment after it (`[t, v, ease]`): a named ease (now including anticipate, overshoot and settle) or a cubic Bézier `[x1, y1, x2, y2]`. Handle y values are limited to −1…2 so overshoot stays believable. Old two-element keys are unchanged. The Motion docker's curve editor sets presets or drags the Bézier handles.
+- **Clips:** `applyClip` covers idle, breathing, blink, listening, look-at, reach, sip, write, tail-sway, walk-cycle and follow-through.
+  - Each clip expands into ordinary actions and tracks tagged `clip`, so it stays editable, can be blended with a weight, and is removed as one unit (`removeClip`).
+  - A clip the rig can't do returns the reason.
+  - Reach uses an anticipate-and-overshoot curve, then settles and returns to rest. Look-at moves the eyes first.
+- **Action additions:** `weight` (a blend, which can be keyed), `phase` (a loop offset, so a tail moves as a wave), and `motion` (a clip's own keyed path).
+- **Secondary motion:** `follow`, evaluated live from absolute time, trails the nearest non-following ancestor with a damped response. Time wraps around the scene, so loops join continuously.
+- **Contacts:** `attach` carries a layer with a target (a cup in a hand, a cat on a branch) relative to where it was when the attach began, so it never jumps. `contact` holds an IK limb on its target, easing in and out over 0.15 s.
+- **`motionProblems`:** reports a contact sliding more than 2 units (out of reach, or held back by a limit), and two one-shots fighting over the same part.
+- **Motion Director:** `directMotion` and `POST /api/direct` describe each rig's capabilities to the model and accept a clip plan only if it passes:
+  - names, timing and rig support;
+  - motion principles: eyes lead a reach or sip, one arm task at a time, one-shots fit the scene;
+  - no contact slips.
+  
+  A failing plan is sent back with what to fix, up to three times. The editor shows the plan and applies it as one undo step, or discards it. It refuses to apply a plan if the scene changed since it was made.
+- Not done:
+  - The walk cycle swings legs in place (no root travel or foot contacts).
+  - Hand-set and IK keys aren't drawn as curves on the timeline itself; curves are edited in the Motion docker.
+  - Secondary motion samples 24 earlier moments per frame, so very long follow chains cost render time.
+  - Only the fake provider has run the Director; a real model's plans are untested.
+
 ### M12 — Cinematic scene and compositing system
 
 **Goal:** Improve visual depth, lighting and final image consistency without overwhelming the illustration.

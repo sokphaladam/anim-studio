@@ -21,6 +21,8 @@ export { objectBounds, layerPivot, type Box } from "./bounds";
 export { registerImage, getImage, imageSources, frameUrl, type Bitmap } from "./images";
 export { boneTip, clampBone, solveIK, meshPose, meshTriangles, drawMesh, rigProblems, skeleton, mirrorBone, type MeshPose, type RigProblem, type SkeletonKind, type SkeletonOptions } from "./rig";
 export { setTransformAt, switchState, switchVisibility, setSwitchKey, applyExpression, applyPose, characterOf, poseProblems, EXPRESSIONS, BASE_OPTION, POSES, type Expression, type Pose, type FaceSlot, type PoseProblem } from "./face";
+export { applyClip, removeClip, clipsOf, motionProblems, CLIP_NAMES, CLIP_INFO, type ClipName, type ClipArgs, type ClipResult, type MotionProblem } from "./clips";
+export { bezier, easeOf } from "./tracks";
 export { compileActions, lookAtKeys, actionTracks, actionOffsets, fitPeriod, requiredTurn, MAX_TURN, MAX_GAZE } from "./actions";
 
 /** Webfonts objects draw with; hosts should load these (e.g. document.fonts.load) before rendering. */
@@ -70,7 +72,7 @@ export function layerMatrix(spec: SceneSpec, layer: Layer | null, t: number, mak
     const bone = l.type === "bone";
     if (rest && bone) continue;
     // actions add on top of the layer's own transform
-    const add = actionOffsets(spec, l.id, t);
+    const add = actionOffsets(spec, l.id, t, make);
     const ik = bone ? spec.ik?.find((k) => k.upper === l.id) : undefined;
     const lower = solvedLower?.id === l.id ? solvedLower : null;
     if (!l.transform && !add && !ik && !lower) continue;
@@ -172,7 +174,7 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
         ctx.setTransform(...mul(base, M));
         ctx.globalAlpha = vis;
         let params = parseParams(def, l.params);
-        const fade = actionOffsets(spec, l.id, t)?.opacity ?? 0;
+        const fade = actionOffsets(spec, l.id, t, make)?.opacity ?? 0;
         if (fade && "opacity" in params) params = { ...params, opacity: (resolve(params.opacity, spec, t) as number) + fade };
         const pose = l.mesh && meshPose(spec, l, t, make);
         const asset = pose ? spec.assets?.[String(l.params.asset)] : undefined;

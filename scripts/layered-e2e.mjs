@@ -227,6 +227,43 @@ try {
   await page.screenshot({ path: `${out}/layered-face.png` });
   await page.locator(".dv-tab", { hasText: "Layers" }).click();
 
+  // Motion docker: a clip from the library, the Motion Director's plan applied as one step, and a key's curve
+  const motionOn = async (id) => {
+    await page.locator(".dv-tab", { hasText: "Layers" }).click();
+    await row(id).click();
+    await page.locator(".dv-tab", { hasText: "Motion" }).click();
+  };
+  await page.evaluate(() => window.studio.getState().set({ t: 0, playing: false }));
+  await motionOn("girl");
+  await page.getByRole("combobox", { name: "Clip", exact: true }).selectOption("breathing");
+  await page.getByRole("button", { name: "Add clip" }).click();
+  check(await state(() => window.studio.getState().spec.actions.some((a) => a.clip === "girl_breathing_1")), "a breathing clip is added from the library");
+  await page.getByRole("combobox", { name: "Clip", exact: true }).selectOption("tail_sway");
+  await page.getByRole("button", { name: "Add clip" }).click();
+  check(await page.getByRole("alert").filter({ hasText: /no tail bones/ }).isVisible(), "a clip the rig can't do says why");
+  const stepsBefore = await state(() => window.studio.getState().past.length);
+  await page.getByRole("textbox", { name: "What should happen" }).fill("she glances at the clock and listens");
+  await page.getByRole("button", { name: "Plan the motion" }).click();
+  const planBox = page.getByRole("group", { name: "Motion plan" });
+  await planBox.waitFor({ timeout: 30000 });
+  check(await planBox.getByText(/the clock catches her eye/).isVisible(), "the director's plan is shown for review before it changes anything");
+  check((await state(() => window.studio.getState().past.length)) === stepsBefore, "planning alone doesn't change the scene");
+  await planBox.getByRole("button", { name: "Apply (one undo step)" }).click();
+  const applied = await state(() => ({ steps: window.studio.getState().past.length, clips: [...new Set(window.studio.getState().spec.actions.map((a) => a.clip).filter(Boolean))] }));
+  check(applied.steps === stepsBefore + 1 && applied.clips.length >= 4, `the plan is applied as one undoable step (${applied.clips.join(", ")})`);
+  await motionOn("girl_head");
+  const curves = page.getByRole("region", { name: "Curves" });
+  await curves.getByRole("button").first().click();
+  await curves.getByRole("combobox", { name: "Ease" }).selectOption("custom");
+  const eased = await state(() => {
+    const s = window.studio.getState().spec;
+    return Object.values(s.tracks).some((tr) => tr.keys.some((k) => Array.isArray(k[2])));
+  });
+  check(eased, "a key gets its own Bézier curve in the curve editor");
+  check(await curves.getByRole("img", { name: "Ease curve" }).isVisible(), "the curve and its handles are drawn");
+  await page.screenshot({ path: `${out}/layered-motion.png` });
+  await page.locator(".dv-tab", { hasText: "Layers" }).click();
+
   // save, reopen: assets, rig and keyframes intact
   const saved = await state(async () => {
     const { saveProject } = await import("/src/store/projects.ts");

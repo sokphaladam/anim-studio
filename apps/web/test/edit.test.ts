@@ -2,7 +2,7 @@ import { apply, layerMatrix, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useStudio } from "../src/store";
-import { addGaze, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
+import { addGaze, setClipWeight, setKeyEase, tracksOf, addIK, addSkeleton, addStroke, addView, removeAction, setSwitch, type ViewResponse, applyRecut, approveAsset, removeIK, reparentKeepingPlace, setBoneParams, setIK, setMesh, deleteFrame, deleteLayer, duplicateFrame, insertBlankFrame, moveFrame, profilesOf, renameLayer, setDuration, setTransform, transformStroke } from "../src/store/edit";
 import { visibleSpec } from "../src/canvas/CanvasView";
 import { blankScene } from "../src/store/scenes";
 
@@ -339,5 +339,34 @@ describe("faces, views and gaze (M10)", () => {
     valid(ren);
     const k = setSwitch(base(), "girl_mouth", { keys: [[2, "smile"], [0, "neutral"]] });
     expect(k.switches![0].keys).toEqual([[0, "neutral"], [2, "smile"]]);
+  });
+});
+
+describe("motion edits (M11)", () => {
+  const base = () =>
+    ({
+      version: 1,
+      meta: { title: "t", duration: 4, fps: 24, width: 400, height: 400 },
+      palette: {},
+      tracks: { "head-rotation": { keys: [[0, 0], [1, 0.3], [2, 0]], ease: "inOut" }, "look-rotation": { keys: [[0, 0], [1, 0.2]], ease: "inOut" } },
+      overlays: [],
+      beats: [],
+      layers: [{ id: "head", type: "image", transform: { x: 0, y: 0, rotation: "@head-rotation", scale: 1 }, params: { asset: "a", x: 0, y: 0, w: 10, h: 10 } }],
+      assets: { a: { src: "/a.png", width: 10, height: 10, kind: "image" } },
+      actions: [{ id: "c-1", type: "bob", part: "head", start: 0, ease: "inOut", amount: 1, clip: "c", tracks: { rotation: "look-rotation" } }],
+    }) as unknown as SceneSpec;
+
+  it("sets and clears a key's own ease, Bézier or named", () => {
+    let s = setKeyEase(base(), "head-rotation", 1, [0.4, -0.3, 0.2, 1.2]);
+    expect(s.tracks["head-rotation"].keys[1]).toEqual([1, 0.3, [0.4, -0.3, 0.2, 1.2]]);
+    s = setKeyEase(s, "head-rotation", 0, "settle");
+    expect(s.tracks["head-rotation"].keys[0]).toEqual([0, 0, "settle"]);
+    valid(s);
+    expect(setKeyEase(s, "head-rotation", 1, null).tracks["head-rotation"].keys[1]).toEqual([1, 0.3]);
+  });
+
+  it("lists the tracks moving a layer, and blends a clip", () => {
+    expect(tracksOf(base(), "head")).toEqual([{ name: "head-rotation", label: "rotation" }, { name: "look-rotation", label: "c · rotation" }]);
+    expect(setClipWeight(base(), "c", 0.5).actions![0].weight).toBe(0.5);
   });
 });

@@ -24,3 +24,12 @@ it("health explains when Ollama is not running", async () => {
   const h = (await (await fetch(`${base}/api/health`)).json()) as { ok: boolean; message: string };
   expect(h).toMatchObject({ ok: false, message: "Ollama is not running — start it and refresh" });
 });
+
+it("POST /api/direct validates the body and needs a rigged character", async () => {
+  const post = (body: unknown) => fetch(`${base}/api/direct`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  expect((await post({ intent: "x" })).status).toBe(400);
+  const spec = { version: 1, meta: { title: "t", duration: 4, width: 100, height: 100 }, layers: [] };
+  const r = await post({ spec, intent: "she dances" });
+  expect(r.status).toBe(422);
+  expect(((await r.json()) as { error: string }).error).toMatch(/no rigged character/);
+});

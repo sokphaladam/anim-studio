@@ -152,7 +152,13 @@ export async function comfyHealth(opts: { url: string; dir: string }) {
   const layered = existsSync(join(models, "checkpoints", SEGMENT_MODEL)) && existsSync(join(models, "background_removal", BG_REMOVAL_MODEL));
   try {
     await fetch(`${opts.url}/system_stats`, { signal: AbortSignal.timeout(2000) });
-    return { installed: true, video, layered, running: true };
+    // COMFY_URL may be another PC: ask ComfyUI which models it has, not this disk
+    const has = async (folder: string, file: string) =>
+      fetch(`${opts.url}/models/${folder}`, { signal: AbortSignal.timeout(2000) })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((l: unknown) => Array.isArray(l) && l.includes(file), () => false);
+    const [v, seg, bg] = await Promise.all([has("diffusion_models", VIDEO_MODEL), has("checkpoints", SEGMENT_MODEL), has("background_removal", BG_REMOVAL_MODEL)]);
+    return { installed: true, video: video || v, layered: layered || (seg && bg), running: true };
   } catch {
     return { installed, video, layered, running: false };
   }

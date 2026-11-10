@@ -143,7 +143,7 @@ export function loopShot(p: LayeredPlan, duration: number): Shot {
   const who = p.characters.map((c) => [`the ${label(c.id)} ${c.idle.map((i) => IDLE_WORDS[i]).join(", ") || "stays calm and still"}`, ...c.parts.map((x) => `${x.motion === "swing" ? "lifts" : "gently moves"} the ${x.find}`)].join(" and "));
   const acts = p.actions.flatMap((a) => (a.type === "walk" ? [`the ${label(a.who)} walks slowly with natural steps and comes back`] : a.type === "look_at" ? [`the ${label(a.who)} looks toward the ${label(a.target)}`] : []));
   const fx = p.ambient.map((a) => ({ stars: "stars twinkle", "falling-leaves": "leaves fall gently", birds: "birds cross the sky", steam: "steam curls up", rain: "rain falls" })[a.type]);
-  const motion = [...who, ...acts, ...fx, "the camera stays completely still, calm continuous motion that could repeat forever"].join(". ");
+  const motion = [...who, ...acts, ...fx, "the camera stays completely still, every object keeps its exact place, shape and size, nothing appears or disappears, calm continuous motion that could repeat forever"].join(". ");
   return { id: "loop", start: 0, end, motion };
 }
 

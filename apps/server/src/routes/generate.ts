@@ -14,7 +14,7 @@ const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation
   loop: z.boolean().default(false),
 });
 
-const VIDEO_NEGATIVE = "static image, still frame, blurry, distorted face, deformed hands, morphing, flickering, jitter, low quality, watermark, text";
+const VIDEO_NEGATIVE = "static image, still frame, blurry, distorted face, deformed hands, extra limbs, extra fingers, morphing, melting, objects moving out of place, objects appearing or disappearing, background changing, scene change, camera movement, zoom, flickering, jitter, low quality, watermark, text";
 const VIDEO_FPS = 24;
 /** Per-call spend: a cap for this task, and a report of what each task it starts is estimated to cost. */
 export type SpendOpts = { maxCostUsd?: number; onCost?: (usd: number) => void };
@@ -143,7 +143,7 @@ export function generateRoutes(
       say();
       const tick = setInterval(say, 15_000);
       try {
-        const clip = await run({ image: png, positive: videoPrompt(r.data.motion, r.data.scene), negative: "static image, still frame, blurry, distorted face, deformed hands, morphing, flickering, jitter, low quality, watermark, text", width, height, frames: 121, fps: 24, seed: Math.floor(Math.random() * 2 ** 31) }, signal);
+        const clip = await run({ image: png, positive: videoPrompt(r.data.motion, r.data.scene), negative: VIDEO_NEGATIVE, width, height, frames: 121, fps: 24, seed: Math.floor(Math.random() * 2 ** 31) }, signal);
         emit({ type: "footage", footage: clip });
       } finally {
         clearInterval(tick);

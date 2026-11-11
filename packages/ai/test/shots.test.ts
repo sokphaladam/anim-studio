@@ -24,8 +24,8 @@ it("the natural-motion loop divides the scene, keeps the camera still and names 
     ambient: [{ type: "falling-leaves" }],
     actions: [{ type: "walk", who: "cat", path: [[0.1, 0.7], [0.3, 0.7]], start: 2, end: 8 }],
   });
-  // two loops in 12 s, one in 6 s, four in 30 s: the clip's loop point always lands on the scene's
-  expect([12, 6, 30, 5].map((d) => loopShot(p, d).end)).toEqual([6, 6, 7.5, 5]);
+  // short clips (at least 4 s); the editor times their playback so the loop point lands on the scene's (placeLoop)
+  expect([12, 6, 30, 5].map((d) => loopShot(p, d).end)).toEqual([4, 4, 4, 4]);
   const s = loopShot(p, 12);
   expect(s).toMatchObject({ id: "loop", start: 0 });
   expect(s.motion).toMatch(/the girl breathes slowly, blinks now and then\. the cat stays calm and still\. the cat walks slowly with natural steps.*leaves fall gently\. the camera stays completely still/);

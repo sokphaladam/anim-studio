@@ -53,3 +53,28 @@ it("a placed clip plays once in its window, trimmed, over the layers below", () 
   expect(px(0.95)).toEqual([150, 0, 0]); // frame 6
   expect(px(1.2)[2]).toBeGreaterThan(200); // after it: the paper again, no loop
 });
+
+it("a held clip shows each drawing for a while, as hand animation does", () => {
+  const r = validateScene({ version: 1, meta: { title: "held", duration: 4, fps: 30, width: 4, height: 4 }, layers: [{ id: "v", type: "footage", params: { frames, count: 10, fps: 10, crossfade: 0, hold: 2.5 } }] });
+  if (!r.ok) throw new Error(r.errors.join("\n"));
+  const at = (t: number) => {
+    const c = createCanvas(4, 4);
+    createRenderer(c, r.spec, { createCanvas: (w, h) => createCanvas(w, h) }).render(t);
+    return c.getContext("2d").getImageData(1, 1, 1, 1).data[0];
+  };
+  // 2.5 drawings a second: frame 0 holds until 0.4 s, then frame 4
+  expect([0.05, 0.35, 0.45, 0.75].map(at)).toEqual([0, 0, 100, 100]);
+});
+
+it("a ping-pong clip plays forward then backward, so its end meets its start", () => {
+  const r = validateScene({ version: 1, meta: { title: "pp", duration: 4, fps: 30, width: 4, height: 4 }, layers: [{ id: "v", type: "footage", params: { frames, count: 10, fps: 10, pingpong: true } }] });
+  if (!r.ok) throw new Error(r.errors.join("\n"));
+  const at = (t: number) => {
+    const c = createCanvas(4, 4);
+    createRenderer(c, r.spec, { createCanvas: (w, h) => createCanvas(w, h) }).render(t);
+    return c.getContext("2d").getImageData(1, 1, 1, 1).data[0];
+  };
+  expect(at(0.35)).toBe(75); // forward: frame 3
+  expect(at(1.65)).toBe(75); // backward: 0.35 s before the 2 s cycle ends, frame 3 again
+  expect(at(2.05)).toBe(0); // the next cycle starts where the last one ended
+});

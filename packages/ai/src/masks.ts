@@ -320,6 +320,13 @@ export function fillHoles(m: Mask, width: number, height: number, maxArea: numbe
   return out;
 }
 
+/** Bounding boxes [x0, y0, x1, y1) of a mask's separate islands larger than `minArea` pixels (two chairs → two boxes). */
+export function islandBoxes(m: Mask, width: number, minArea: number): Box[] {
+  return components(m.length, width, (i) => m[i] >= ON)
+    .filter((c) => c.length > minArea)
+    .map((c) => c.reduce<Box>((b, i) => { const x = i % width, y = (i / width) | 0; return [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x + 1), Math.max(b[3], y + 1)]; }, [Infinity, Infinity, -1, -1]));
+}
+
 /** Drops islands of up to `maxArea` pixels (stray specks the segmenter caught). The biggest island always stays. */
 export function despeckle(m: Mask, width: number, maxArea: number): Mask {
   const out = Uint8Array.from(m, (v) => (v >= ON ? 255 : 0));
@@ -369,7 +376,7 @@ export function cleanMask(m: Mask, width: number, height: number, c: Cleanup): M
 /** Cleanup for generated parts: drops stray specks under ~0.05% of the painting and fills pinholes under ~0.03%. */
 export const defaultCleanup = (width: number, height: number) => ({ grow: 0, holes: Math.round(width * height * 0.0003), specks: Math.round(width * height * 0.0005), feather: 0 });
 
-export type Check = { name: "cutout" | "edges" | "framing" | "coverage" | "joint" | "reconstruction" | "identity" | "turn"; status: "pass" | "review" | "fail"; note?: string };
+export type Check = { name: "cutout" | "edges" | "framing" | "coverage" | "joint" | "reconstruction" | "identity" | "turn" | "seat"; status: "pass" | "review" | "fail"; note?: string };
 
 /**
  * Splits painted eyes into irises (what moves for a gaze) and eye whites (what they move over). Irises are the eyes'

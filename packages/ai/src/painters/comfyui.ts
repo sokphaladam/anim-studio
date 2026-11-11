@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { AIError } from "../types";
 
 export interface PaintArgs {
@@ -12,6 +13,7 @@ export interface PaintArgs {
   /** A diffusers model folder on ComfyUI's "diffusers" path; default the Animagine checkpoint. */
   model?: string;
   signal?: AbortSignal;
+  onProgress?: (p: Progress) => void;
 }
 
 export interface AnimateArgs {
@@ -25,7 +27,10 @@ export interface AnimateArgs {
   frames: number;
   fps: number;
   seed: number;
+  /** End on the start image too, so the clip loops forward with no jump (local model with the anim-studio node). */
+  loop?: boolean;
   signal?: AbortSignal;
+  onProgress?: (p: Progress) => void;
 }
 
 export interface InpaintArgs {
@@ -38,6 +43,30 @@ export interface InpaintArgs {
   /** 1 = paint the area from scratch; lower keeps more of what is there. */
   denoise: number;
   signal?: AbortSignal;
+  onProgress?: (p: Progress) => void;
+}
+
+/** What ComfyUI is doing on a job: the stage, and while sampling, the step (1-based) of how many. */
+export type Progress = { label: string; step?: number; steps?: number };
+/** Stage names for the nodes worth reporting; other nodes keep the last stage. */
+const STAGE: Record<string, string> = {
+  UNETLoader: "Loading the model", CheckpointLoaderSimple: "Loading the model", DiffusersLoader: "Loading the model", CLIPLoader: "Loading the model", VAELoader: "Loading the model", LoraLoaderModelOnly: "Loading the model",
+  // the sampler node starts by moving the weights onto the GPU (~20 s), before its first step
+  CLIPTextEncode: "Reading the prompt", KSampler: "Loading onto the GPU", VAEDecodeTiled: "Decoding", VAEDecode: "Decoding", CreateVideo: "Saving", SaveVideo: "Saving", SaveImage: "Saving",
+};
+
+/**
+ * Turns one ComfyUI WebSocket message into progress for job `id` of `graph` (null when it says nothing new).
+ * `executing` names the node that started; `progress` is the sampler's step count.
+ */
+export function progressFrom(msg: { type?: string; data?: { prompt_id?: string; node?: string | null; value?: number; max?: number } }, graph: Record<string, { class_type: string }>, id: string, last: Progress): Progress | null {
+  if (msg.data?.prompt_id !== id) return null;
+  if (msg.type === "executing" && msg.data.node) {
+    const label = STAGE[graph[msg.data.node]?.class_type];
+    return label && label !== last.label ? { label } : null;
+  }
+  if (msg.type === "progress" && msg.data.max) return { label: "Generating", step: msg.data.value, steps: msg.data.max };
+  return null;
 }
 
 /**
@@ -96,9 +125,17 @@ export const VIDEO_MODEL = "wan2.2_ti2v_5B_fp16.safetensors";
 /** Sizes the video model works at (multiples of 32), per aspect. */
 export const VIDEO_SIZE = { "16:9": [1280, 704], "9:16": [704, 1280], "1:1": [960, 960] } as const;
 
-/** Wan 2.2 TI2V 5B image-to-video, as in ComfyUI's own template (shift 8, uni_pc, cfg 5). */
-function videoWorkflow(a: AnimateArgs, image: string) {
+/** Distilled 4-step LoRA for the 5B model (Kijai's conversion of Wan2.2-TI2V-5B-Turbo): ~10x fewer model passes. */
+export const VIDEO_TURBO_LORA = "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors";
+
+/**
+ * Wan 2.2 TI2V 5B image-to-video, as in ComfyUI's own template (shift 8, uni_pc, cfg 5, 20 steps); with the turbo LoRA,
+ * 4 steps at cfg 1 (the LoRA is CFG-distilled, so the negative prompt is ignored).
+ */
+export function videoWorkflow(a: AnimateArgs, image: string, turbo = false, loop = false) {
+  const model = turbo ? "lora" : "unet";
   return {
+    ...(turbo && { lora: { class_type: "LoraLoaderModelOnly", inputs: { model: ["unet", 0], lora_name: VIDEO_TURBO_LORA, strength_model: 1 } } }),
     // fp8 weights halve the model's memory (~5 GB instead of 10): at fp16 it plus the text encoder used ~18 GB of RAM on a 32 GB PC
     unet: { class_type: "UNETLoader", inputs: { unet_name: VIDEO_MODEL, weight_dtype: process.env.VIDEO_WEIGHTS || "fp8_e4m3fn" } },
     clip: { class_type: "CLIPLoader", inputs: { clip_name: "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type: "wan", device: "default" } },
@@ -106,11 +143,17 @@ function videoWorkflow(a: AnimateArgs, image: string) {
     img: { class_type: "LoadImage", inputs: { image } },
     pos: { class_type: "CLIPTextEncode", inputs: { clip: ["clip", 0], text: a.positive } },
     neg: { class_type: "CLIPTextEncode", inputs: { clip: ["clip", 0], text: a.negative } },
-    shift: { class_type: "ModelSamplingSD3", inputs: { model: ["unet", 0], shift: 8 } },
-    latent: { class_type: "Wan22ImageToVideoLatent", inputs: { vae: ["vae", 0], width: a.width, height: a.height, length: a.frames, batch_size: 1, start_image: ["img", 0] } },
-    sample: { class_type: "KSampler", inputs: { model: ["shift", 0], positive: ["pos", 0], negative: ["neg", 0], latent_image: ["latent", 0], seed: a.seed, steps: 20, cfg: 5, sampler_name: "uni_pc", scheduler: "simple", denoise: 1 } },
-    decode: { class_type: "VAEDecode", inputs: { samples: ["sample", 0], vae: ["vae", 0] } },
-    video: { class_type: "CreateVideo", inputs: { images: ["decode", 0], fps: a.fps } },
+    shift: { class_type: "ModelSamplingSD3", inputs: { model: [model, 0], shift: 8 } },
+    latent: loop
+      ? { class_type: "Wan22LoopLatent", inputs: { vae: ["vae", 0], width: a.width, height: a.height, length: a.frames, start_image: ["img", 0] } }
+      : { class_type: "Wan22ImageToVideoLatent", inputs: { vae: ["vae", 0], width: a.width, height: a.height, length: a.frames, batch_size: 1, start_image: ["img", 0] } },
+    sample: { class_type: "KSampler", inputs: { model: ["shift", 0], positive: ["pos", 0], negative: ["neg", 0], latent_image: ["latent", 0], seed: a.seed, ...(turbo ? { steps: 4, cfg: 1, sampler_name: "euler" } : { steps: 20, cfg: 5, sampler_name: "uni_pc" }), scheduler: "simple", denoise: 1 } },
+    // decoding 100+ full-size frames at once overflows a 12 GB card and ComfyUI falls back to a crawl (425 s of a 567 s
+    // clip on a 3060); in 512 px tiles, 64 frames at a time, it fits in memory
+    decode: { class_type: "VAEDecodeTiled", inputs: { samples: ["sample", 0], vae: ["vae", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 } },
+    // with the loop node: every frame matched to the painting's colors (the model dims a clip mid-way, a pulse at the seam)
+    ...(loop && { colors: { class_type: "AnimStudioMatchColors", inputs: { images: ["decode", 0], reference: ["img", 0] } } }),
+    video: { class_type: "CreateVideo", inputs: { images: [loop ? "colors" : "decode", 0], fps: a.fps } },
     save: { class_type: "SaveVideo", inputs: { video: ["video", 0], filename_prefix: "anim-studio/video", format: "mp4", codec: "h264" } },
   };
 }
@@ -178,6 +221,9 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
     if (!h.installed) throw new AIError("The image painter isn't installed", "Run pnpm setup:painter (downloads about 9 GB), or choose Vector.");
     starting ??= (async () => {
       const c = comfyInstall(opts.dir);
+      // our ComfyUI nodes (the seamless loop), next to this file in the repo; skipped where it isn't (a bundled build)
+      const nodes = fileURLToPath(new URL("../../comfy/anim_studio_nodes.py", import.meta.url));
+      if (existsSync(nodes) && existsSync(join(c.comfy, "custom_nodes"))) copyFileSync(nodes, join(c.comfy, "custom_nodes", "anim_studio_nodes.py"));
       spawn(c.python, [...c.args, "--disable-auto-launch", "--port", new URL(url).port || "8188"], {
         cwd: c.cwd,
         detached: true,
@@ -195,12 +241,31 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
   }
 
   /** Queues a workflow and resolves with the bytes of its first output file (image or video). Frees the GPU after. */
-  async function run(graph: object, signal: AbortSignal | undefined, maxSeconds: number, what: string): Promise<Uint8Array> {
+  async function run(graph: Record<string, { class_type: string }>, signal: AbortSignal | undefined, maxSeconds: number, what: string, onProgress?: (p: Progress) => void): Promise<Uint8Array> {
     await ensureRunning(signal);
-    const res = await fetch(`${url}/prompt`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: graph }), signal });
+    // progress comes over ComfyUI's WebSocket, tagged with our client id; without it the job still runs, just silently
+    const clientId = crypto.randomUUID();
+    let ws: WebSocket | undefined;
+    let id = "";
+    let last: Progress = { label: "Waiting for the GPU" };
+    if (onProgress) {
+      onProgress(last);
+      ws = await new Promise<WebSocket | undefined>((done) => {
+        const s = new WebSocket(`${url.replace(/^http/, "ws")}/ws?clientId=${clientId}`);
+        s.onopen = () => done(s);
+        s.onerror = () => done(undefined);
+        setTimeout(() => done(undefined), 3000);
+      });
+      ws?.addEventListener("message", (ev) => {
+        if (typeof ev.data !== "string" || !id) return; // binary messages are preview images
+        const p = progressFrom(JSON.parse(ev.data), graph, id, last);
+        if (p) onProgress((last = p));
+      });
+    }
+    const res = await fetch(`${url}/prompt`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: graph, client_id: clientId }), signal }).catch((e) => (ws?.close(), Promise.reject(e)));
     const body = (await res.json()) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
     if (!res.ok || !body.prompt_id) throw new AIError(`The ${what} rejected the job: ${body.error?.message ?? res.status}`, JSON.stringify(body.node_errors ?? "").slice(0, 300));
-    const id = body.prompt_id;
+    id = body.prompt_id;
     type File = { filename: string; subfolder: string; type: string };
     try {
       for (let i = 0; i < maxSeconds; i++) {
@@ -240,6 +305,7 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
       if (signal?.aborted) await fetch(`${url}/interrupt`, { method: "POST" }).catch(() => {});
       throw e;
     } finally {
+      ws?.close();
       await fetch(`${url}/free`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ unload_models: true, free_memory: true }) }).catch(() => {});
     }
   }
@@ -258,11 +324,17 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
   return {
     name: "comfyui",
     // a 1344×768 image takes ~30 s on an RTX 3060, more on the first run while the model loads
-    paint: (a) => run(workflow(a), a.signal, 900, "painter"),
+    paint: (a) => run(workflow(a), a.signal, 900, "painter", a.onProgress),
     async animate(a) {
       const image = await upload(a.image, "anim-studio-start.png", a.signal);
-      // a 5 s 1280×704 clip takes several minutes on a 12 GB card
-      return run(videoWorkflow(a, image), a.signal, 3600, "video model");
+      // the turbo LoRA when installed (pnpm setup:painter --video) unless VIDEO_TURBO=0: 4 steps instead of 20
+      // shortcut: checks this disk, so a remote COMFY_URL uses the slow path; ask /models/loras if that setup matters
+      const turbo = process.env.VIDEO_TURBO !== "0" && existsSync(join(comfyInstall(opts.dir).comfy, "models", "loras", VIDEO_TURBO_LORA));
+      // a 5 s 1280×704 clip takes ~20 min on a 12 GB card at 20 steps, a few minutes with the turbo LoRA
+      // the loop node is ours (packages/ai/comfy): copied in whenever the app starts ComfyUI, and by pnpm setup:painter --video
+      if (a.loop && !(await fetch(`${url}/object_info/Wan22LoopLatent`).then((r) => r.json(), () => ({})).then((o) => "Wan22LoopLatent" in o)))
+        throw new AIError("The video model can't make looping clips yet", "Close the ComfyUI window (or restart the PC) so the app restarts it with the loop node, or run pnpm setup:painter --video.");
+      return run(videoWorkflow(a, image, turbo, !!a.loop), a.signal, 3600, "video model", a.onProgress);
     },
     async removeBackground(png, signal) {
       return run(bgRemovalWorkflow(await upload(png, "anim-studio-cutout.png", signal)), signal, 600, "background remover");
@@ -273,7 +345,7 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
     async inpaint(a) {
       const image = await upload(a.image, "anim-studio-inpaint.png", a.signal);
       const mask = await upload(a.mask, "anim-studio-inpaint-mask.png", a.signal);
-      return run(inpaintWorkflow(a, image, mask), a.signal, 900, "painter");
+      return run(inpaintWorkflow(a, image, mask), a.signal, 900, "painter", a.onProgress);
     },
   };
 }

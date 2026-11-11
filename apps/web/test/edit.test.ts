@@ -427,14 +427,20 @@ describe("cinematic shots on the timeline", () => {
 });
 
 describe("natural-motion loop", () => {
-  const loop = (frames: string, count: number) => ({ id: "loop", start: 0, end: 6, footage: { frames, count, fps: 24 }, status: "ready" as const, checks: [], attempts: 1, source: "fake", prompt: "" });
+  const loop = (frames: string, count: number, prompt = "her head nods", loops?: boolean) => ({ id: "loop", start: 0, end: 6, footage: { frames, count, fps: 24, loops }, status: "ready" as const, checks: [], attempts: 1, source: "fake", prompt });
   it("covers the scene with one looping clip timed to exactly the shot, and a redo replaces it in place", () => {
     let s = placeLoop(blankScene("16:9"), loop("/api/images/aaa/", 150));
     const l = s.layers.at(-1)!;
-    expect(l).toMatchObject({ id: "video_loop", type: "footage", params: { loop: true, shot: "loop", fps: 25 } }); // 150 frames over 6 s
+    expect(l).toMatchObject({ id: "video_loop", type: "footage", params: { loop: true, shot: "loop", fps: 24, trimIn: 0.25, hold: 8, pingpong: true, crossfade: 0 } }); // 144 of 150 frames forward, then back: 12 s, one cycle per scene
     expect(validateScene(s).ok).toBe(true);
     s = placeLoop(s, loop("/api/images/bbb/", 144));
     expect(s.layers.filter((x) => x.type === "footage")).toHaveLength(1);
-    expect(s.layers.at(-1)!.params).toMatchObject({ frames: "/api/images/bbb/", fps: 24 });
+    expect(s.layers.at(-1)!.params).toMatchObject({ frames: "/api/images/bbb/", fps: 23 });
+    // a 20 s scene can't hold two 12 s passes: 2 passes of 10 s, so the loop point still lands on the scene's
+    expect(placeLoop({ ...blankScene("16:9"), meta: { ...blankScene("16:9").meta, duration: 20 } }, loop("/api/images/ccc/", 150)).layers.at(-1)!.params.fps).toBe(14.4);
+    // rain would fall upward played backward: it keeps the crossfade, slowed to half speed over 12 s
+    expect(placeLoop(blankScene("16:9"), loop("/api/images/ddd/", 150, "rain streaking down the window")).layers.at(-1)!.params).toMatchObject({ pingpong: false, crossfade: 1.5, fps: 12 });
+    // a clip made to loop repeats forward, without its last frame (a copy of its first): 4 s of 97 frames over 6 s
+    expect(placeLoop(blankScene("16:9"), { ...loop("/api/images/eee/", 97, "her head nods", true), end: 4 }).layers.at(-1)!.params).toMatchObject({ pingpong: false, crossfade: 0.2, trimIn: 0, fps: 16, trimOut: 0.0625, hold: 8 });
   });
 });

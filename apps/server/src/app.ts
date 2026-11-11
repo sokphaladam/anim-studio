@@ -67,6 +67,7 @@ export function buildApp(opts: { config?: AIConfig; provider?: Provider; painter
     // a fade-in would hand the video model a black first frame, and the clip would start from black
     frame: (spec: SceneSpec, t: number) => renderPng({ ...spec, overlays: spec.overlays.filter((o) => o.type !== "fade") }, t, imagesDir),
     stats: images.clipStats,
+    still: images.still,
     retries: Math.max(0, Number(env.RUNWAY_MAX_RETRIES ?? 1)),
     budgetUsd: cloud ? maxCostUsd : Infinity,
   };

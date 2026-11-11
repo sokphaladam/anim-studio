@@ -33,3 +33,16 @@ it("POST /api/direct validates the body and needs a rigged character", async () 
   expect(r.status).toBe(422);
   expect(((await r.json()) as { error: string }).error).toMatch(/no rigged character/);
 });
+
+it("POST /api/ideas validates the body and returns the model's scene ideas", async () => {
+  const post = (body: unknown) => fetch(`${base}/api/ideas`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  expect((await post({ style: "lofi" })).status).toBe(400);
+  const idea = { title: "Window seat", prompt: "Cozy lofi anime illustration, a girl sits on a wooden chair at a small table by a rainy window, steam rises from her cup." };
+  const ideasApp = buildApp({ provider: { name: "mock", model: "mock", generateJSON: async () => JSON.stringify({ ideas: [idea, idea, idea, idea] }) }, store: createStore(":memory:"), config: { provider: "ollama", ollamaUrl: "http://127.0.0.1:9", ollamaModel: "x", fallback: null } });
+  ideasApp.log.level = "silent";
+  const r = await ideasApp.inject({ method: "POST", url: "/api/ideas", payload: { title: "Rainy Japanese Café ☔", mood: "Relaxing · Cozy" } });
+  await ideasApp.close();
+  expect(r.statusCode).toBe(200);
+  // at most three, as the start page shows them
+  expect(r.json()).toEqual({ ideas: [idea, idea, idea] });
+});

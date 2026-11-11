@@ -125,7 +125,7 @@ export const IKSchema = z.object({
 
 /** One line of a part's quality checklist. review = a person should look; fail = unusable as it is. */
 export const AssetCheckSchema = z.object({
-  name: z.enum(["cutout", "edges", "framing", "coverage", "joint", "reconstruction", "identity", "turn"]),
+  name: z.enum(["cutout", "edges", "framing", "coverage", "joint", "reconstruction", "identity", "turn", "seat"]),
   status: z.enum(["pass", "review", "fail"]),
   note: z.string().optional(),
 });
@@ -299,7 +299,8 @@ export const CinematicShotSchema = z.object({
   start: z.number().min(0),
   end: z.number().positive(),
   /** Missing when every attempt failed: the shot is kept so it can be retried alone. */
-  footage: z.object({ frames: z.string().min(1), count: z.number().int().min(1), fps: z.number().positive() }).optional(),
+  /** `loops`: made to end on its first frame, so it repeats forward with no jump (local model, loop node). */
+  footage: z.object({ frames: z.string().min(1), count: z.number().int().min(1), fps: z.number().positive(), loops: z.boolean().optional() }).optional(),
   /** ready = passed its checks; review = made, but a person should look (why: `review`); failed = no usable clip. */
   status: z.enum(["ready", "review", "failed"]).default("ready"),
   review: z.string().optional(),

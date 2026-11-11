@@ -32,14 +32,20 @@ export type ClipStats = {
   height: number;
   /** Mean brightness and its spread (0–1), and the mean absolute change to the following frame (0–1). */
   samples: { at: number; mean: number; spread: number; jump: number }[];
+  /** Mean absolute difference (0–1) of the first frame and the one before the last (a looping clip's last repeats its first). */
+  loopGap: number;
 };
 
 /** Thresholds, 0–1 of full brightness: adjacent frames changing more than this is a cut or flicker, not motion. */
 const JUMP = 0.12;
 const FLAT = 0.02;
+/** A looping clip that came back measures ~0.008 here; one that never returned, ~0.08. */
+const LOOP_GAP = 0.03;
+/** Share of the frame SAM must find as "person" for one to be there (a medium shot is 2%+). */
+const PERSON = 0.005;
 
 /** Checks of a generated clip against the shot it should be. Empty = nothing wrong found. */
-export function clipChecks(c: ClipStats, want: { seconds: number; aspect: number }): QualityItem[] {
+export function clipChecks(c: ClipStats, want: { seconds: number; aspect: number; loops?: boolean }): QualityItem[] {
   const out: QualityItem[] = [];
   const seconds = c.count / c.fps;
   if (!c.count) return [{ target: "clip", name: "decode", status: "fail", note: "The clip has no frames" }];
@@ -48,8 +54,19 @@ export function clipChecks(c: ClipStats, want: { seconds: number; aspect: number
   const flat = c.samples.filter((s) => s.spread < FLAT);
   if (flat.length) out.push({ target: "clip", name: "blank", status: "fail", note: `Blank frames at ${flat.map((s) => `${s.at.toFixed(1)} s`).join(", ")}` });
   const jumps = c.samples.filter((s) => s.jump > JUMP);
+  if (want.loops && c.loopGap > LOOP_GAP) out.push({ target: "clip", name: "loop", status: "fail", note: "The clip doesn't come back to its first frame, so the loop would jump" });
   if (jumps.length) out.push({ target: "clip", name: "flicker", status: "review", note: `Sudden change between frames at ${jumps.map((s) => `${s.at.toFixed(1)} s`).join(", ")}` });
   return out;
+}
+
+/**
+ * A person the video model invented or lost: SAM's "person" share of the first frame against frames later in the clip.
+ * Seen: a girl the painter left out painted in mid-clip (0% → 2.4%), popping in and out at every loop.
+ */
+export function personChecks(first: number, later: number[]): QualityItem[] {
+  if (first < PERSON && later.some((s) => s >= PERSON)) return [{ target: "clip", name: "person", status: "fail", note: "A person appears who isn't in the picture" }];
+  if (first >= PERSON && later.some((s) => s < first * 0.3)) return [{ target: "clip", name: "person", status: "fail", note: "The person disappears partway through" }];
+  return [];
 }
 
 /** The worst status of a list: fail > review > pass. */

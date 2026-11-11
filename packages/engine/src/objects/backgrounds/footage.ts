@@ -27,6 +27,10 @@ export const footage = defineObject({
     trimOut: z.number().min(0).default(0),
     /** Repeat to fill the scene; off plays once, then draws nothing (a placed cinematic shot). */
     loop: z.boolean().default(true),
+    /** Drawings per second: each frame is held, as hand animation is (on twos/threes); 0 shows every frame. */
+    hold: z.number().min(0).default(0),
+    /** Loop forward then backward, so the end always meets the start (the video model's clips drift and never match). */
+    pingpong: z.boolean().default(false),
     /** The cinematic shot this clip shows, so redoing that shot replaces it here too. */
     shot: z.string().optional(),
   }),
@@ -36,7 +40,9 @@ export const footage = defineObject({
     const u = t - p.start;
     if (u < 0 || (!p.loop && u >= len)) return;
     const loops = p.loop && env.spec.meta.duration - p.start > len + 1e-3;
-    const local = loops ? u % len : Math.min(u, len - 1e-6);
+    const m = loops ? u % (p.pingpong ? 2 * len : len) : Math.min(u, len - 1e-6);
+    const free = m >= len ? Math.max(0, 2 * len - m - 1e-6) : m;
+    const local = p.hold ? Math.floor(free * p.hold) / p.hold : free;
     const frame = (s: number) => getImage(frameUrl(p.frames, Math.min(p.count - 1, Math.max(0, Math.floor((p.trimIn + s) * p.fps)))));
     const a = frame(local);
     if (!a) {
@@ -47,7 +53,7 @@ export const footage = defineObject({
     cover(ctx, a, env.width, env.height);
     // near the end of the clip, fade in its beginning so the loop has no jump
     const x = Math.min(p.crossfade, len / 2);
-    if (loops && x > 0 && local > len - x) {
+    if (loops && !p.pingpong && x > 0 && local > len - x) {
       const b = frame(local - (len - x));
       if (b) cover(ctx, b, env.width, env.height, (local - (len - x)) / x);
     }

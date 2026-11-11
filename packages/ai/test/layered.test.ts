@@ -51,7 +51,7 @@ function character(w: number, h: number, face = false, extra: { scenery?: boolea
 
 /** In-memory PNG stand-ins: "encoding" stores the raster under a token. */
 /** missCharacter: the first `n` character paintings come back empty (the painter painted something else). */
-function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: boolean; scenery?: boolean; ink?: boolean; floorAt?: number } = {}) {
+function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: boolean; scenery?: boolean; ink?: boolean; floorAt?: number; chair?: [number, number, number, number] } = {}) {
   let misses = opts.missCharacter ?? 0;
   const blobs = new Map<string, Raster>();
   const stored = new Map<string, Raster>();
@@ -88,6 +88,8 @@ function fakeTools(opts: { noHead?: boolean; missCharacter?: number; face?: bool
       if (text === "eyebrows") return encode(maskWhere(r, () => false));
       // the background's floor: everything below floorAt (when the test paints one)
       if (["floor", "windowsill", "ground"].includes(text)) return encode(maskWhere(r, (i) => opts.floorAt !== undefined && near(r.data, i, SKY) && Math.floor(i / 4 / r.width) >= r.height * opts.floorAt));
+      // a chair in the background: the box (fractions of the painting) when the test paints one
+      if (text === "chair") return encode(maskWhere(r, (i) => { const c = opts.chair, x = (i / 4) % r.width, y = Math.floor(i / 4 / r.width); return !!c && near(r.data, i, SKY) && x >= c[0] * r.width && x < c[2] * r.width && y >= c[1] * r.height && y < c[3] * r.height; }));
       // the character (not the window painted beside her)
       if (text === "girl") return encode(maskWhere(r, (i) => !near(r.data, i, [255, 255, 255]) && !near(r.data, i, WALL)));
       if (opts.noHead) return encode(maskWhere(r, () => false));
@@ -598,5 +600,18 @@ describe("treehouse fixes: scenery, fills, held props, standing on the floor", (
     expect(feet).toBeCloseTo(bg.y + (firstFloorRow * bg.h) / rows, 0);
     const none = await gen({});
     expect(none.spec.layers.find((l) => l.id === "girl")!.pivot![1]).toBeCloseTo(0.95 * 720, 0);
+  });
+
+  it("puts a seated character on the chair painted near its box, not floating where the box was", async () => {
+    // the planned box is x 0.45–0.75 (centre 0.6); the painted chair is at x 0.62–0.78 (centre 0.7), its legs end at 0.8
+    const { spec } = await gen({ floorAt: 0.9, chair: [0.62, 0.5, 0.78, 0.8] });
+    const bg = spec.layers.find((l) => l.id === "balcony_background")!.params as { x: number; y: number; w: number; h: number };
+    const [fx, fy] = spec.layers.find((l) => l.id === "girl")!.pivot!;
+    expect(fx).toBeCloseTo(bg.x + 0.7 * bg.w, -1);
+    expect(fy).toBeCloseTo(bg.y + 0.8 * bg.h, -1);
+    expect(spec.assets!.girl_body.checks!.find((c) => c.name === "seat")!.status).toBe("pass");
+    // a chair far from the box is someone else's: kept on the floor and flagged
+    const far = await gen({ floorAt: 0.9, chair: [0.02, 0.5, 0.1, 0.8] });
+    expect(far.spec.assets!.girl_body.checks!.find((c) => c.name === "seat")!.status).toBe("review");
   });
 });

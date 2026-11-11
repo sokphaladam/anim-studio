@@ -1,0 +1,13 @@
+[
+ {
+  "model": "local",
+  "case": "night",
+  "ok": true,
+  "seconds": 140,
+  "frames": 93,
+  "size": "1280×704",
+  "status": "pass",
+  "checks": "pass",
+  "sheet": "night-local.jpg"
+ }
+]

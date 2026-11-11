@@ -84,7 +84,12 @@ export function imageStore(dir: string) {
         const jump = a.reduce((s, v, p) => s + Math.abs(v - b[p]), 0) / a.length;
         samples.push({ at: i / f.fps, mean, spread, jump });
       }
-      return { count: f.count, fps: f.fps, width: first.width, height: first.height, samples };
+      const loopGap = f.count > 2 ? (await grey(f.count - 2)).out.reduce((s, v, p) => s + Math.abs(v - first.out[p]), 0) / first.out.length : 0;
+      return { count: f.count, fps: f.fps, width: first.width, height: first.height, samples, loopGap };
+    },
+    /** The JPEG bytes of a stored clip's frame `at` (0–1) of the way through. */
+    still(f: Footage, at: number): Uint8Array {
+      return readFileSync(join(dir, f.frames.replace(/^\/api\/images\//, ""), `${String(Math.round(at * (f.count - 1)) + 1).padStart(3, "0")}.jpg`));
     },
     /** The bytes of a stored painting, from its /api/images/<name>.png src; null if unknown. */
     read(src: string): Uint8Array | null {

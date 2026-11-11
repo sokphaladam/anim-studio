@@ -1,4 +1,4 @@
-import { AIError, directMotion, editScene, type Provider } from "@anim/ai";
+import { AIError, directMotion, editScene, songIdeas, type Provider } from "@anim/ai";
 import { createCanvas } from "@napi-rs/canvas";
 import { validateScene } from "@anim/engine";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -8,6 +8,7 @@ import type { Store } from "../db";
 const Save = z.object({ spec: z.unknown(), label: z.string().trim().min(1).max(200).default("Saved"), chat: z.array(z.unknown()).max(1000).optional() });
 const Edit = z.object({ instruction: z.string().trim().min(2, "Say what to change").max(2000) });
 const Direct = z.object({ spec: z.unknown(), intent: z.string().trim().min(3, "Say what should happen").max(2000) });
+const Ideas = z.object({ title: z.string().trim().min(1, "Give the song a title").max(200), style: z.string().trim().max(1000).optional(), mood: z.string().trim().max(200).optional() });
 type Id = { Params: { id: string } };
 
 const bad = (reply: FastifyReply, error: string, errors?: string[]) => reply.code(400).send({ error, errors });
@@ -56,6 +57,20 @@ export function projectRoutes(app: FastifyInstance, store: Store, provider: () =
     reply.raw.on("close", () => !reply.raw.writableFinished && ac.abort());
     try {
       return await directMotion(v.spec, b.data.intent, provider(), { signal: ac.signal, make: (w, h) => createCanvas(w, h) });
+    } catch (e) {
+      if (e instanceof AIError) return reply.code(422).send({ error: e.message, fix: e.fix });
+      throw e;
+    }
+  });
+
+  /** Scene ideas for a song (title, style, mood): three prompts the start page can generate from. Nothing is saved. */
+  app.post("/api/ideas", async (req, reply) => {
+    const b = Ideas.safeParse(req.body);
+    if (!b.success) return bad(reply, b.error.issues[0].message);
+    const ac = new AbortController();
+    reply.raw.on("close", () => !reply.raw.writableFinished && ac.abort());
+    try {
+      return { ideas: await songIdeas(b.data, provider(), ac.signal) };
     } catch (e) {
       if (e instanceof AIError) return reply.code(422).send({ error: e.message, fix: e.fix });
       throw e;

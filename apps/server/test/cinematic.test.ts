@@ -1,5 +1,5 @@
 import { SceneSpecSchema } from "@anim/spec";
-import type { Provider, VideoProvider } from "@anim/ai";
+import type { Painter, Provider, VideoProvider } from "@anim/ai";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,9 +16,11 @@ process.env.IMAGES_DIR = join(dir, "images");
 process.env.EXPORTS_DIR = join(dir, "exports");
 // real MP4s, so clips go through the same frame splitting and checks as a provider's: a 6 s test pattern (the default
 // shot of the 6 s plan) passes; a 6 s flat colour is blank and fails
-const make = (name: string, src: string) => (spawnSync(ffmpegBin, ["-v", "error", "-f", "lavfi", "-i", `${src}s=128x72:d=6:r=24`, "-pix_fmt", "yuv420p", join(dir, name)]), new Uint8Array(readFileSync(join(dir, name))));
+const make = (name: string, src: string, d = 6) => (spawnSync(ffmpegBin, ["-v", "error", "-f", "lavfi", "-i", `${src}s=128x72:d=${d}:r=24`, "-pix_fmt", "yuv420p", join(dir, name)]), new Uint8Array(readFileSync(join(dir, name))));
 const good = make("good.mp4", "testsrc=");
 const blank = make("blank.mp4", "color=c=red:");
+// the natural-motion loop is a 4 s shot
+const good4 = make("good4.mp4", "testsrc=", 4);
 
 const provider: Provider = { name: "mock", model: "mock", generateJSON: async () => JSON.stringify(PLAN) };
 const config = { provider: "ollama" as const, ollamaUrl: "http://127.0.0.1:9", ollamaModel: "x", fallback: null };
@@ -56,8 +58,8 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function start(cloudVideo: VideoProvider) {
-  const app = buildApp({ provider, painter, config, store: createStore(":memory:"), cloudVideo });
+async function start(cloudVideo: VideoProvider, p: Painter = painter) {
+  const app = buildApp({ provider, painter: p, config, store: createStore(":memory:"), cloudVideo });
   apps.push(app);
   app.log.level = "silent";
   await app.listen({ port: 0, host: "127.0.0.1" });
@@ -92,12 +94,12 @@ it("one prompt makes the editable scene, its quality report, then a checked cine
 }, 60_000); // the provider is polled every 5 s
 
 it("natural motion: one loop shot that divides the scene, made before any cinematic extras", async () => {
-  const f = fakeVideo([good]);
+  const f = fakeVideo([good4]);
   const { events } = await start(f.p);
   const shots = final(await events("/api/generate", { ...REQ, cinematic: false, loop: true }));
   expect(shots).toHaveLength(1);
   expect(shots[0]).toMatchObject({ id: "loop", status: "ready" });
-  expect((shots[0] as unknown as { end: number; prompt: string }).end).toBe(6);
+  expect((shots[0] as unknown as { end: number; prompt: string }).end).toBe(4);
   expect((shots[0] as unknown as { prompt: string }).prompt).toMatch(/camera stays completely still/);
 }, 60_000);
 
@@ -168,3 +170,34 @@ it("places a shot on the editable timeline, re-timed and trimmed, saves and reop
   const none = await app.inject({ method: "POST", url: "/api/export/cinematic", payload: { spec: { ...reopened, cinematic: [] } } });
   expect(none.statusCode).toBe(422);
 }, 120_000);
+
+it("single painting: paints the whole scene once, shows it, then loops it with the video model from that exact frame", async () => {
+  const f = fakeVideo([good4]);
+  const { events } = await start(f.p);
+  const prompt = "Cozy lofi anime illustration, 12-second seamless loop, rainy night, static camera, a girl sits on a chair at a desk. Motion: rain falls, steam rises. Everything stays in place, nothing floats.";
+  const ev = await events("/api/generate", { prompt, duration: 12, aspect: "16:9", mode: "painting", loop: true, title: "Fading Lights" });
+  const types = ev.map((e) => e.type);
+  expect(types).not.toContain("error");
+  // no planning and no cut-outs: painted, then the scene, then the loop
+  expect(types).not.toContain("plan");
+  expect(types.indexOf("painted")).toBeLessThan(types.indexOf("done"));
+  const spec = ev.find((e) => e.type === "done")!.data.spec as { meta: { title: string }; layers: { type: string; params: Record<string, unknown> }[] };
+  expect(SceneSpecSchema.safeParse(spec).success).toBe(true);
+  expect(spec.meta.title).toBe("Fading Lights");
+  expect(spec.layers).toEqual([{ id: "painting", type: "painting", params: { src: ev.find((e) => e.type === "painted")!.data.src, zoom: 1, swaySeconds: 0 } }]);
+  const shots = final(ev) as unknown as { id: string; status: string; end: number; prompt: string }[];
+  expect(shots).toMatchObject([{ id: "loop", status: "ready", end: 4 }]);
+  // the video model hears what moves and that everything else holds still, not the loop/camera words or the motion list twice
+  expect(shots[0].prompt).toMatch(/^rain falls, steam rises\. The camera stays completely still/);
+  expect(shots[0].prompt).not.toMatch(/seamless loop|12-second|Everything stays in place/);
+}, 60_000);
+
+it("single painting: a painting that leaves the person out is redone, up to 3 times, then warns", async () => {
+  let paints = 0;
+  const empty: Painter = { ...painter, paint: (a) => (paints++, painter.paint(a)), segment: (bytes, text, sig) => painter.segment!(bytes, text === "person" ? "eyes" : text, sig) }; // the fake finds no "eyes": an empty mask
+  const { events } = await start(fakeVideo([good]).p, empty);
+  const ev = await events("/api/generate", { prompt: "Rainy night, a girl sits on a chair at a desk. Motion: rain falls.", duration: 12, aspect: "16:9", mode: "painting", loop: true });
+  expect(ev.map((e) => e.type)).not.toContain("error");
+  expect(paints).toBe(3);
+  expect(ev.find((e) => e.type === "warning" && /left the person out 3 times/.test(String(e.data.message)))).toBeTruthy();
+}, 60_000);

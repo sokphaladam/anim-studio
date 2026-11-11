@@ -1,6 +1,6 @@
 import type { SceneSpec } from "@anim/spec";
 import { expect, it } from "vitest";
-import { clipChecks, sceneChecks, worst, type ClipStats } from "../src";
+import { clipChecks, personChecks, sceneChecks, worst, type ClipStats } from "../src";
 
 const scene = (layers: unknown[], assets: Record<string, unknown> = { a: { src: "/api/images/a.png", width: 10, height: 10 } }) =>
   ({ version: 1, meta: { title: "t", duration: 6, fps: 30, width: 1280, height: 720 }, palette: {}, tracks: {}, overlays: [], beats: [], layers, assets }) as unknown as SceneSpec;
@@ -17,7 +17,7 @@ it("rejects broken references and flags implausible rigs and parts", () => {
   expect(flagged.map((i) => [i.target, i.name, i.status])).toEqual([["a", "asset", "review"], ["head", "pivot", "review"]]);
 });
 
-const stats = (o: Partial<ClipStats> = {}, sample: Partial<ClipStats["samples"][number]> = {}): ClipStats => ({ count: 144, fps: 24, width: 1280, height: 704, samples: [0, 1.5, 3, 4.5, 6].map((at) => ({ at, mean: 0.4, spread: 0.2, jump: 0.02, ...sample })), ...o });
+const stats = (o: Partial<ClipStats> = {}, sample: Partial<ClipStats["samples"][number]> = {}): ClipStats => ({ count: 144, fps: 24, width: 1280, height: 704, samples: [0, 1.5, 3, 4.5, 6].map((at) => ({ at, mean: 0.4, spread: 0.2, jump: 0.02, ...sample })), loopGap: 0.008, ...o });
 const want = { seconds: 6, aspect: 16 / 9 };
 
 it("passes a clip that matches its shot", () => expect(clipChecks(stats(), want)).toEqual([]));
@@ -28,4 +28,18 @@ it("rejects clips of the wrong length or shape, blank clips, and flags flicker",
   expect(clipChecks(stats({}, { spread: 0.001 }), want)[0]).toMatchObject({ name: "blank", status: "fail" });
   expect(clipChecks(stats({}, { jump: 0.3 }), want)[0]).toMatchObject({ name: "flicker", status: "review" });
   expect(worst(clipChecks(stats({ count: 0 }), want))).toBe("fail");
+});
+
+it("a looping clip must come back to its first frame", () => {
+  const want = { seconds: 6, aspect: 1280 / 704, loops: true };
+  expect(clipChecks(stats(), want)).toEqual([]);
+  expect(clipChecks(stats({ loopGap: 0.08 }), want)).toMatchObject([{ name: "loop", status: "fail" }]);
+  expect(clipChecks(stats({ loopGap: 0.08 }), { ...want, loops: false })).toEqual([]); // a plain clip isn't expected to
+});
+
+it("fails a clip that invents or loses a person, and passes one that keeps them", () => {
+  expect(personChecks(0, [0.024, 0.02])).toMatchObject([{ name: "person", status: "fail", note: expect.stringMatching(/appears/) }]);
+  expect(personChecks(0.03, [0.03, 0.002])).toMatchObject([{ name: "person", status: "fail", note: expect.stringMatching(/disappears/) }]);
+  expect(personChecks(0.03, [0.028, 0.032])).toEqual([]);
+  expect(personChecks(0, [0, 0.001])).toEqual([]); // an empty room stays empty
 });

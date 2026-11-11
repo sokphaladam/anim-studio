@@ -4,9 +4,9 @@
 import { applyExpression, BASE_OPTION, compileActions, EXPRESSIONS, fitPeriod, poseProblems, validateScene, type Expression, type FaceSlot } from "@anim/engine";
 import type { Action, Asset, CharacterProfile, Layer, SceneSpec, Switch } from "@anim/spec";
 import { z } from "zod";
-import { ASPECT_SIZE, LOOK, PAINT_SIZE, paintPrompt, type GenerateRequest } from "./generate";
+import { ASPECT_SIZE, negativeFor, PAINT_SIZE, paintPrompt as paintTags, type GenerateRequest } from "./generate";
 import { extractJson } from "./json";
-import { count, crop, cutout, defaultCleanup, grow, intersect, withoutInk, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, separateIrises, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
+import { count, crop, cutout, defaultCleanup, grow, intersect, islandBoxes, withoutInk, maskBox, maskFrom, maskImage, neckPoint, palette, paletteDrift, paste, recut, reviewOf, separateIrises, smear, subtract, union, type Check, type Mask, type Raster } from "./masks";
 import type { Painter } from "./painters/comfyui";
 import { prompt } from "./prompts";
 import { AIError, type Provider } from "./types";
@@ -130,7 +130,10 @@ export function cinematicShots(p: LayeredPlan, duration: number): Shot[] {
 }
 
 /** Longest video-loop clip: longer clips cost more and drift further from the first frame. */
-const LOOP_MAX = 8;
+// short: a 4 s clip is a third faster to make and, slowed and ping-ponged, still fills a 12 s scene
+const LOOP_MAX = 4;
+/** A video loop's length: the largest that divides the scene into whole loops, at most LOOP_MAX (two 6 s loops in 12 s). */
+export const loopSeconds = (duration: number) => Math.max(SHOT_SECONDS[0], +(duration / Math.ceil(duration / LOOP_MAX)).toFixed(3));
 const IDLE_WORDS = { breathe: "breathes slowly", bob: "nods gently to the music", blink: "blinks now and then" } as const;
 /**
  * The one shot that animates the whole scene with natural motion, as a seamless loop: a clip length that divides the
@@ -138,8 +141,7 @@ const IDLE_WORDS = { breathe: "breathes slowly", bob: "nods gently to the music"
  * and what moves, from the plan (the video model moves what a cut-out can't: legs, bodies, hair).
  */
 export function loopShot(p: LayeredPlan, duration: number): Shot {
-  const n = Math.ceil(duration / LOOP_MAX);
-  const end = Math.max(SHOT_SECONDS[0], +(duration / n).toFixed(3));
+  const end = loopSeconds(duration);
   const who = p.characters.map((c) => [`the ${label(c.id)} ${c.idle.map((i) => IDLE_WORDS[i]).join(", ") || "stays calm and still"}`, ...c.parts.map((x) => `${x.motion === "swing" ? "lifts" : "gently moves"} the ${x.find}`)].join(" and "));
   const acts = p.actions.flatMap((a) => (a.type === "walk" ? [`the ${label(a.who)} walks slowly with natural steps and comes back`] : a.type === "look_at" ? [`the ${label(a.who)} looks toward the ${label(a.target)}`] : []));
   const fx = p.ambient.map((a) => ({ stars: "stars twinkle", "falling-leaves": "leaves fall gently", birds: "birds cross the sky", steam: "steam curls up", rain: "rain falls" })[a.type]);
@@ -174,6 +176,9 @@ const NO_PEOPLE = "1girl, 1boy, person, people, human, face, animal, character";
 const NO_FRAME = "frame, border, picture frame, framed, card, scenery, landscape, horizon, white outline, sticker, die-cut";
 // a character is painted alone: the setting it sits in is the background's job
 const NO_SET = "window, window frame, arch, door, wall, building, room, furniture, bench, chair";
+// a seated character is painted without its seat (NO_SET), so it must be put on a seat the background painted
+const SEATED = /\b(sit|sits|sitting|seated)\b/i;
+const SEAT_WORDS = ["chair", "bench", "sofa", "stool"];
 const HUMAN = /\b(1?girl|1?boy|man|woman|person|kid|child|lady|guy|human|witch|student)s?\b/i;
 /** SDXL sizes (~1 megapixel, multiples of 64); a character is painted at the one closest to its box's shape. */
 const SDXL_SIZES: [number, number][] = [[1024, 1024], [1152, 896], [896, 1152], [1216, 832], [832, 1216], [1344, 768], [768, 1344]];
@@ -216,6 +221,9 @@ const r2 = (v: number) => +v.toFixed(2);
 
 /** Plans, paints, separates and rigs a layered scene. Throws (with a fix) on failure; the caller's scene is untouched until "done". */
 export async function generateLayered(req: GenerateRequest, provider: Provider, tools: LayeredTools, emit: (e: LayeredEvent) => void, signal?: AbortSignal): Promise<SceneSpec> {
+  // the scene's visual direction, for every painting below
+  const paintPrompt = (subject: string) => paintTags(subject, req.style);
+  const NEGATIVE = negativeFor(req.style);
   const { painter } = tools;
   if (!painter.removeBackground || !painter.segment || !painter.inpaint) throw new AIError("The image painter can't separate layers", "Install the segmentation models: pnpm setup:painter --layered");
   const [W, H] = ASPECT_SIZE[req.aspect];
@@ -284,7 +292,9 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const bgId = `${plan.setting}_background`;
   emit({ type: "asset", id: bgId, label: "Background", status: "running" });
   const [pw, ph] = PAINT_SIZE[req.aspect];
-  const bgPng = await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${light}, detailed background, depth of field, atmospheric perspective, cinematic lighting`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal });
+  // someone sits: the background must paint what they sit on, or they end up floating
+  const seat = plan.characters.some((c) => SEATED.test(c.pose)) && !new RegExp(`\\b(${SEAT_WORDS.join("|")}|couch|seat)`, "i").test(plan.environment) ? ", an empty chair" : "";
+  const bgPng = await painter.paint({ positive: paintPrompt(`no humans, scenery, ${plan.environment}${seat}${light}, detailed background, depth of field, atmospheric perspective, cinematic lighting`), negative: `${NEGATIVE}, ${NO_PEOPLE}, ${separate}`, width: pw, height: ph, seed, signal });
   const bg = await tools.decode(bgPng);
   const k = Math.max(W / bg.width, H / bg.height); // cover the frame without stretching
   back.push({ id: bgId, type: "image", params: { asset: bgId, x: r2((W - bg.width * k) / 2), y: r2((H - bg.height * k) / 2), w: r2(bg.width * k), h: r2(bg.height * k) } });
@@ -321,6 +331,23 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     if (!cols || edges.length < cols * 0.3) return null;
     edges.sort((a, b) => a - b);
     return r2(bgAt.y + edges[edges.length >> 1] * k);
+  };
+
+  // the seats in the background (chairs, benches, …), found once when a seated character first needs one (scene px)
+  let seats: [number, number, number, number][] | null = null;
+  /**
+   * The seat a character planned at x0..x1 (scene px) sits on: the one whose centre is nearest the box's centre, within a
+   * box width of it. Null when the background has none there; the caller keeps the floor placement and flags it.
+   */
+  const seatFor = async (x0: number, x1: number): Promise<[number, number, number, number] | null> => {
+    if (!seats) {
+      let m: Mask = new Uint8Array(bg.width * bg.height);
+      for (const what of SEAT_WORDS) m = union(m, maskFrom(await tools.decode(await painter.segment!(bgPng, what, signal)), bg.width, bg.height));
+      seats = islandBoxes(m, bg.width, bg.width * bg.height * 0.002).map(([a, b, c, d]) => [bgAt.x + a * k, bgAt.y + b * k, bgAt.x + c * k, bgAt.y + d * k]);
+    }
+    const mid = (x0 + x1) / 2;
+    const near = seats.filter((s) => Math.abs((s[0] + s[2]) / 2 - mid) <= x1 - x0).sort((a, b) => Math.abs((a[0] + a[2]) / 2 - mid) - Math.abs((b[0] + b[2]) / 2 - mid));
+    return near[0] ?? null;
   };
 
   /**
@@ -386,7 +413,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       label(c.id),
       {
         positive: paintPrompt(`${human ? "solo" : "no humans, animal focus, solo"}, ${look}, ${pose}, full body, centered, ${WHITE_BG}${light}`),
-        negative: `${LOOK.negative}, ${human ? "multiple people" : "1girl, 1boy, human"}, cropped, out of frame, ${NO_FRAME}, ${NO_SET}`,
+        negative: `${NEGATIVE}, ${human ? "multiple people" : "1girl, 1boy, human"}, cropped, out of frame, ${NO_FRAME}, ${NO_SET}`,
         width: cw,
         height: ch,
       },
@@ -474,7 +501,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       if (count(eyeMask) >= 20) {
         const m = grow(eyeMask, sw, sh, Math.max(3, Math.round(sw * 0.012)));
         const words = wakes ? ["open eyes, awake, looking up", "closed eyes, sleeping"] : ["closed eyes, peaceful", "open eyes"];
-        const out = await tools.decode(await painter.inpaint!({ image: srcPng, mask: tools.encode(maskImage(m, sw, sh)), positive: paintPrompt(`${words[0]}, ${look}`), negative: `${LOOK.negative}, ${words[1]}`, seed, denoise: 0.65, signal }));
+        const out = await tools.decode(await painter.inpaint!({ image: srcPng, mask: tools.encode(maskImage(m, sw, sh)), positive: paintPrompt(`${words[0]}, ${look}`), negative: `${NEGATIVE}, ${words[1]}`, seed, denoise: 0.65, signal }));
         if (out.width === sw && out.height === sh) {
           eyes = paste(src, out, m);
           save(`${id}_fill`, eyes, { kind: "source", from: `${c.id}_source` });
@@ -519,7 +546,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
           const id = `${c.id}_${kind}_${o}`;
           emit({ type: "asset", id, label: label(id), status: "running" });
           const [pos, neg] = SLOT_WORDS[`${kind}:${o}`];
-          const out = await tools.decode(await painter.inpaint!({ image: srcPng, mask: tools.encode(maskImage(m, sw, sh)), positive: paintPrompt(`${pos}, ${look}`), negative: `${LOOK.negative}, ${neg}`, seed, denoise: 0.65, signal }));
+          const out = await tools.decode(await painter.inpaint!({ image: srcPng, mask: tools.encode(maskImage(m, sw, sh)), positive: paintPrompt(`${pos}, ${look}`), negative: `${NEGATIVE}, ${neg}`, seed, denoise: 0.65, signal }));
           if (out.width !== sw || out.height !== sh) {
             emit({ type: "asset", id, label: label(id), status: "skipped", message: "The painter returned another size; the painted face is kept" });
             continue;
@@ -540,8 +567,13 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     const s = Math.min(boxW / (cb[2] - cb[0]), boxH / (cb[3] - cb[1]));
     // feet on the painted floor, sill or ground under the planned box, when one is there (the planner can't see the
     // painting, so its boxes float or sink a little)
-    const floor = await standOn(c.box[0] * W, c.box[2] * W, c.box[3] * H, boxH);
-    const ox = c.box[0] * W + (boxW - (cb[2] - cb[0]) * s) / 2 - cb[0] * s, oy = (floor ?? c.box[3] * H) - cb[3] * s;
+    // a seated one goes on its seat instead: centred on it, feet where the seat meets the floor (its bottom edge)
+    const sits = SEATED.test(c.pose) && !walks;
+    const seatBox = sits ? await seatFor(c.box[0] * W, c.box[2] * W) : null;
+    const floor = seatBox ? seatBox[3] : await standOn(c.box[0] * W, c.box[2] * W, c.box[3] * H, boxH);
+    const cx = seatBox ? (seatBox[0] + seatBox[2]) / 2 : c.box[0] * W + boxW / 2;
+    const ox = cx - ((cb[0] + cb[2]) / 2) * s, oy = (floor ?? c.box[3] * H) - cb[3] * s;
+    const seated: Check | null = sits ? (seatBox ? { name: "seat", status: "pass", note: "Placed on the seat painted in the background" } : { name: "seat", status: "review", note: `Sits, but no ${SEAT_WORDS.join(", ")} was found in the background near its box; check it isn't floating` }) : null;
     const at = (x: number, y: number): [number, number] => [r2(ox + x * s), r2(oy + y * s)];
     const feet = at((cb[0] + cb[2]) / 2, cb[3]);
 
@@ -569,7 +601,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     // a soft shadow under the feet keeps the character standing on the ground as it moves
     cast.push({ id: c.id, type: "group", params: {}, pivot: feet, shadow: { amount: 0.45, size: 1 } });
     // breathing grows the body from where it rests
-    cast.push(place(`${c.id}_body`, bodyR, body, s, at, { parent: c.id, pivot: feet, from: `${c.id}_body_fill`, mask: `${c.id}_body_mask`, checks: [reconstruction, identity, ...(sceneryCheck(trimmed.dropped) ? [sceneryCheck(trimmed.dropped)!] : [])] }));
+    cast.push(place(`${c.id}_body`, bodyR, body, s, at, { parent: c.id, pivot: feet, from: `${c.id}_body_fill`, mask: `${c.id}_body_mask`, checks: [reconstruction, identity, ...(sceneryCheck(trimmed.dropped) ? [sceneryCheck(trimmed.dropped)!] : []), ...(seated ? [seated] : [])] }));
     for (const p of pieces) {
       const joint = joints.get(p.id);
       const pb = maskBox(p.mask, sw)!;
@@ -596,7 +628,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     stage("props", `Painting the ${label(p.id)}`);
     emit({ type: "asset", id: p.id, label: label(p.id), status: "running" });
     try {
-      const { png, img: src, found } = await paintChecked(label(p.id), { positive: paintPrompt(`no humans, ${p.look}, single object, centered, ${LIGHT_THING.test(p.look) ? GREY_BG : WHITE_BG}${light}`), negative: `${LOOK.negative}, ${NO_PEOPLE}, ${NO_FRAME}`, width: 1024, height: 1024 });
+      const { png, img: src, found } = await paintChecked(label(p.id), { positive: paintPrompt(`no humans, ${p.look}, single object, centered, ${LIGHT_THING.test(p.look) ? GREY_BG : WHITE_BG}${light}`), negative: `${NEGATIVE}, ${NO_PEOPLE}, ${NO_FRAME}`, width: 1024, height: 1024 });
       const trimmed = subjectOnly(maskFrom(await tools.decode(await painter.removeBackground!(png, signal)), src.width, src.height), found, src.width, src.height);
       const m = trimmed.mask;
       const b = maskBox(m, src.width);

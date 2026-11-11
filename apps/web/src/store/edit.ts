@@ -452,10 +452,23 @@ export function placeShot(spec: SceneSpec, shot: CinematicShot): SceneSpec {
  * underneath), looping for the whole scene with a crossfade at its seam. Its fps is set so one pass lasts exactly the
  * shot's length (the model returns a few frames more or less), so its loop point falls on the scene's.
  */
+const FALLS = /\b(rain|snow|fall|falling|drip|pour|waterfall|river|stream)/i;
 export function placeLoop(spec: SceneSpec, shot: CinematicShot): SceneSpec {
   if (!shot.footage) return spec;
-  const fps = +(shot.footage.count / (shot.end - shot.start)).toFixed(4);
-  const params = { ...shot.footage, fps, start: 0, trimIn: 0, trimOut: 0, loop: true, crossfade: 0.8, shot: shot.id };
+  // a clip made to end on its first frame repeats forward; others go forward then back to hide their seam, except
+  // things that fall (rain would fall upward), which keep a crossfade
+  const { loops: own = false, ...clip } = shot.footage;
+  const pingpong = !own && !FALLS.test(shot.prompt);
+  // aimed at half speed (lofi motion is slow; the model's is real-time), on a cycle that still divides the scene
+  const d = spec.meta.duration;
+  const cycle = d / Math.max(1, Math.round(d / ((pingpong ? 4 : 2) * (shot.end - shot.start))));
+  // a plain clip's first ~6 frames jump away from the painting (light shifts), which its loop would replay: skip them;
+  // a looping clip's last frame repeats its first: drop it
+  const skip = own ? 0 : Math.min(6, shot.footage.count >> 3);
+  const used = shot.footage.count - skip - (own ? 1 : 0);
+  const fps = +(used / (pingpong ? cycle / 2 : cycle)).toFixed(4);
+  // held 3 frames each (8 drawings a second), like the hand-drawn loops lofi videos use; every frame reads as CG
+  const params = { ...clip, fps, start: 0, trimIn: +(skip / fps).toFixed(4), trimOut: own ? +(1 / fps).toFixed(4) : 0, loop: true, crossfade: own ? 0.2 : pingpong ? 0 : 1.5, hold: 8, pingpong, shot: shot.id };
   const at = spec.layers.findIndex((l) => l.type === "footage" && l.params.shot === shot.id);
   if (at >= 0) return mapLayer(spec, spec.layers[at].id, (l) => ({ ...l, params: { ...l.params, ...params } }));
   return { ...spec, layers: [...spec.layers, { id: "video_loop", type: "footage", params }] };

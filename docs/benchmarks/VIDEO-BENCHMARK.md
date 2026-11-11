@@ -25,6 +25,8 @@
 
 - **Cloud default: keep `RUNWAY_VIDEO_MODEL=seedance2_5`.** It followed the motion prompt best and kept the scene steady on every case, and it was the fastest. It costs the most: about $0.30 per second, $0.80 minimum per clip. With the default `RUNWAY_MAX_COST_USD=5`, a job affords one 10 s shot plus a retry of a shorter one.
 - **Budget cloud: `kling_4`.** About 40% of seedance's price while the discount lasts, and just as steady, but it moves too little or adds motion of its own. Use it when calm, near-still shots are fine.
+- **Turbo LoRA (2026-11-12):** with `Wan22_TI2V_5B_Turbo_lora_rank_64` (4 steps, cfg 1) the same night clip took **140 s instead of 740 s** on the 3060, checks pass, no visible drift. It's on by default when the LoRA is installed; `VIDEO_TURBO=0` goes back to 20 steps. Results: `video-2026-11-11/results-local.json`.
+- **Tiled decode (2026-11-12):** profiling a 6 s loop (144 frames, turbo) on the 3060: load ~50 s, 4 steps ~85 s, **frame decode 425 s** (the plain VAEDecode overflows 12 GB and falls back to a crawl). `VAEDecodeTiled` (512 px tiles, 64 frames) cut the decode to 155 s and the clip from **567 s to 292 s**, with no visible seams (SSIM 0.94 against the untiled frame). 1024 px / 32-frame tiles were only 9 s faster, so the safer setting stays.
 - **Local (free): Wan 2.2 stays the offline/default path** when cloud is off. It takes about 12–14 min per 4 s clip on a 3060 (roughly 3 min per second of video). It drifts more on dark, sparse scenes like the starry owl sky.
 - **Choosing by style:** these three are all soft lofi anime scenes, which is what the app makes. Seedance led on all three, so there is no reason yet to pick models per style. Re-run the script when new styles or models arrive.
 

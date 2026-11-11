@@ -13,7 +13,7 @@ const PHASE_LABEL = {
   spec: "Writing scene",
   repair: "Repairing scene",
   edit: "Editing scene",
-  cinematic: "Making the cinematic AI video",
+  cinematic: "Making the AI video",
   plan: "Planning layers and actions",
   background: "Painting the background",
   character: "Painting the character",
@@ -48,12 +48,17 @@ function Progress({ g }: { g: Generation }) {
         <LoaderCircle size={16} strokeWidth={1.5} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-fg" title={g.message}>{g.phase === "repair" || layered ? g.message : PHASE_LABEL[g.phase]}</div>
-          <div className="font-mono text-micro text-fg-3">{layered ? `Step ${at + 1} of ${LAYERED_STAGES.length}: ${PHASE_LABEL[g.phase]}` : g.tokens ? `${g.tokens.toLocaleString()} tokens` : "waiting for the model…"}</div>
+          <div className="font-mono text-micro text-fg-3">{layered ? `Step ${at + 1} of ${LAYERED_STAGES.length}: ${PHASE_LABEL[g.phase]}` : g.tokens ? `${g.tokens.toLocaleString()} tokens` : g.message && g.message !== PHASE_LABEL[g.phase] ? g.message : "waiting for the model…"}</div>
         </div>
         <Button size={28} variant="ghost" icon={<X size={14} strokeWidth={1.5} />} onClick={cancelGeneration}>
           Cancel
         </Button>
       </div>
+      {g.progress != null && (
+        <div role="progressbar" aria-label="Current step" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(g.progress * 100)} className="h-1 rounded-full bg-hover">
+          <div className="h-1 rounded-full bg-accent transition-[width] duration-500" style={{ width: `${Math.round(g.progress * 100)}%` }} />
+        </div>
+      )}
       {layered && (
         <ol aria-label="Layered generation stages" className="flex gap-0.5">
           {LAYERED_STAGES.map((s, i) => (

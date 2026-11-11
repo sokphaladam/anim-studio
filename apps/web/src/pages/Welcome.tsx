@@ -3,14 +3,25 @@ import { Clapperboard, Ellipsis, Film, Plus, Wind, RectangleHorizontal, Rectangl
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useMemo, useState } from "react";
 import { SceneThumb } from "../components/SceneThumb";
+import { SongIdeas } from "../components/SongIdeas";
 import { useAIStatus } from "../components/useAIStatus";
-import { generate } from "../store/ai";
+import { generate, type Style } from "../store/ai";
 import { useStudio } from "../store";
 import { deleteProject, listProjects, openProject, type ProjectSummary } from "../store/projects";
 import { ASPECTS, EXAMPLES, blankScene, validSpecOrNull, type Aspect } from "../store/scenes";
 import { AUTOSAVE_KEY } from "./Editor";
 
 const ASPECT_ICON = { "16:9": RectangleHorizontal, "9:16": RectangleVertical, "1:1": Square } as const;
+const MODES = [
+  { id: "painting", label: "Single painting", hint: "One painting of the whole scene, moved by the video AI. Everything stays where it was painted. Best look." },
+  { id: "layered", label: "Editable layers", hint: "Characters and props as separate parts you can edit and re-animate. Parts may not line up." },
+] as const;
+// labels for packages/ai STYLES (the web app doesn't import the AI package)
+const STYLES: { id: Style; label: string; hint: string }[] = [
+  { id: "lofi", label: "Cozy lofi", hint: "Warm lamp light, clean outlines, flat colors: the classic lofi study room." },
+  { id: "cinematic", label: "Cinematic anime", hint: "Film-like light: glowing skies, light rays, rich detailed backgrounds." },
+  { id: "retro", label: "Retro 90s anime", hint: "Hand-painted cels, muted colors and soft film grain, like a 90s anime." },
+];
 
 type PainterHealth = { installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null; cloudQuote?: { budgetUsd: number; retries: number; usdBySeconds: Record<string, number | null> } | null };
 
@@ -66,7 +77,13 @@ export function Welcome() {
   const ai = useAIStatus();
   const [duration, setDuration] = useState(12);
   const painter = usePainter();
-  const painterReady = painter ? painter.installed && painter.layered : null;
+  // painting: one picture of the whole scene, moved by the video model · layered: separate editable parts
+  const [mode, setMode] = useState<"painting" | "layered">("painting");
+  const [style, setStyle] = useState<Style>("lofi");
+  // a picked song idea names the scene, while its prompt is still the one in the box
+  const [idea, setIdea] = useState<{ prompt: string; title: string } | null>(null);
+  // layered generation also needs the segmentation models; a single painting only the painter
+  const painterReady = painter ? painter.installed && (mode === "painting" || painter.layered) : null;
   const canGenerate = prompt.trim().length >= 3 && painterReady !== false;
   const [cinematic, setCinematic] = useState(false);
   // the video model shots would use: the configured cloud one, else the local one
@@ -81,12 +98,17 @@ export function Welcome() {
     : `about $${shotUsd?.toFixed(2) ?? "?"} per ${shotSeconds} s shot, never more than $${cap.toFixed(2)} a scene with retries`;
   // natural motion: one clip that divides the scene (the server's loopShot: at most 8 s), looped over it
   const [natural, setNatural] = useState(false);
-  const loopSeconds = +(duration / Math.ceil(duration / 8)).toFixed(1);
+  // as packages/ai loopSeconds (LOOP_MAX 4, at least 4 s)
+  const loopSeconds = Math.max(4, +(duration / Math.ceil(duration / 4)).toFixed(1));
   const loopUsd = painter?.cloudQuote?.usdBySeconds[Math.max(4, Math.round(loopSeconds))];
   const loopNote = painter?.cloudVideo
     ? `${shotModel} · paid: about $${loopUsd?.toFixed(2) ?? "?"} for a ${loopSeconds} s loop${cap !== undefined && loopUsd != null && loopUsd > cap ? `, over the $${cap.toFixed(2)} limit (raise RUNWAY_MAX_COST_USD)` : ""}`
-    : `local · about ${Math.round(loopSeconds * 3)} min for a ${loopSeconds} s loop`;
-  const start = () => canGenerate && generate({ prompt: prompt.trim(), duration, aspect, cinematic: cinematic && !!shotModel, loop: natural && !!shotModel }, true);
+    : `local · about ${Math.max(1, Math.round(loopSeconds * 0.8))} min for a ${loopSeconds} s loop`;
+  // a painting only moves through the video model's loop, so it is always on there
+  const painted = mode === "painting";
+  const start = () =>
+    canGenerate &&
+    generate({ prompt: prompt.trim(), duration, aspect, mode, style, title: idea?.prompt === prompt ? idea.title : undefined, cinematic: !painted && cinematic && !!shotModel, loop: (painted || natural) && !!shotModel }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   useEffect(() => {
@@ -121,7 +143,10 @@ export function Welcome() {
         </header>
 
         <section className="flex flex-col gap-3">
-          <h1 className="text-hero font-semibold">What do you want to animate?</h1>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <h1 className="text-hero font-semibold">What do you want to animate?</h1>
+            <SongIdeas onPick={(p, title) => (setPrompt(p), setIdea({ prompt: p, title }))} disabled={ai.status !== "ok"} />
+          </div>
           <label htmlFor="prompt" className="sr-only">Describe an animation</label>
           <textarea
             id="prompt"
@@ -138,10 +163,48 @@ export function Welcome() {
           <p id="prompt-note" className="text-sm text-fg-3">{painterReady === false
               ? "Generating needs the image painter and its segmentation models: run pnpm setup:painter --layered (about 11 GB the first time). You can still start a blank scene or open an example."
               : ai.status === "ok"
-                ? "The AI plans the layers, paints each one and sets them moving in a seamless loop (about 3–5 minutes on your GPU). Ctrl+Enter generates."
+                ? mode === "painting" ? "The AI paints the whole scene, then the video AI moves it in a seamless loop. Ctrl+Enter generates." : "The AI plans the layers, paints each one and sets them moving in a seamless loop (about 3–5 minutes on your GPU). Ctrl+Enter generates."
                 : ai.fix
                   ? `AI not ready: ${ai.fix}`
                   : "AI not ready. You can still start a blank scene or open an example."}</p>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="text-title font-semibold text-fg-2">How it's made</h2>
+          <div role="radiogroup" aria-label="How the scene is made" className="grid grid-cols-2 gap-3">
+            {MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                role="radio"
+                aria-checked={mode === m.id}
+                onClick={() => setMode(m.id)}
+                className={cx("flex flex-col gap-1 rounded-md border p-3 text-left transition-ui", mode === m.id ? "border-accent bg-accent-soft" : "border-line bg-panel hover:bg-hover")}
+              >
+                <span className="text-base font-semibold">{m.label}</span>
+                <span className="text-sm text-fg-3">{m.hint}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="text-title font-semibold text-fg-2">Style</h2>
+          <div role="radiogroup" aria-label="Visual style" className="grid grid-cols-3 gap-3">
+            {STYLES.map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                role="radio"
+                aria-checked={style === st.id}
+                onClick={() => setStyle(st.id)}
+                className={cx("flex flex-col gap-1 rounded-md border p-3 text-left transition-ui", style === st.id ? "border-accent bg-accent-soft" : "border-line bg-panel hover:bg-hover")}
+              >
+                <span className="text-base font-semibold">{st.label}</span>
+                <span className="text-sm text-fg-3">{st.hint}</span>
+              </button>
+            ))}
+          </div>
         </section>
 
         <section className="flex flex-col gap-3">
@@ -168,7 +231,12 @@ export function Welcome() {
             })}
           </div>
           <NumberField className="w-72" label="Duration" unit="s" value={duration} min={5} max={30} step={1} slider onChange={(v) => setDuration(Math.round(v))} />
-          {shotModel && (
+          {painted && (
+            <p className="font-mono text-micro text-fg-3">
+              {shotModel ? `Moved by ${shotModel} as a seamless ${loopSeconds} s loop · ${loopNote}` : "No video model is set up, so the painting will stay still: run pnpm setup:painter --video"}
+            </p>
+          )}
+          {shotModel && !painted && (
             <div className="flex items-center gap-2">
               <Toggle pressed={natural} onPressedChange={setNatural} label={`Animate the finished scene with ${shotModel} for natural motion (walking, breathing, hair), looped seamlessly over the editable layers`} icon={<Wind size={16} strokeWidth={1.5} />}>
                 Natural motion (video AI loop)
@@ -176,7 +244,7 @@ export function Welcome() {
               <span className="font-mono text-micro text-fg-3">{loopNote}</span>
             </div>
           )}
-          {shotModel && (
+          {shotModel && !painted && (
             <div className="flex items-center gap-2">
               <Toggle pressed={cinematic} onPressedChange={setCinematic} label={`Also make a cinematic AI video clip from the same plan with ${shotModel}${painter?.cloudVideo ? " (paid cloud service)" : ""}`} icon={<Film size={16} strokeWidth={1.5} />}>
                 Cinematic AI video

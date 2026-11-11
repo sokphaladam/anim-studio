@@ -4,7 +4,7 @@
 // Usage: pnpm setup:painter [--video] [--layered]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import { arch } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,6 +126,10 @@ if (process.argv.includes("--video")) {
   await install(`${WAN}/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors`, join(models, "diffusion_models", "wan2.2_ti2v_5B_fp16.safetensors"));
   await install(`${WAN}/vae/wan2.2_vae.safetensors`, join(side, "vae", "wan2.2_vae.safetensors"));
   await install(`${WAN}/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`, join(side, "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"));
+  // 4-step turbo LoRA (~0.33 GB): the video model then makes a clip in minutes instead of ~20 (VIDEO_TURBO=0 turns it off)
+  await install("https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/Wan22-Turbo/Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors", join(models, "loras", "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors"));
+  // our nodes: a clip that ends on its first frame (seamless loops) and color matching to the painting
+  copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "packages", "ai", "comfy", "anim_studio_nodes.py"), join(comfy, "custom_nodes", "anim_studio_nodes.py"));
 }
 // --layered: layered animation separates characters into parts. SAM 3.1 (~1.75 GB, SAM License) finds a part from a word
 // ("head"); BiRefNet (~0.45 GB, MIT) cuts a subject from its background. ComfyUI ships the nodes for both.

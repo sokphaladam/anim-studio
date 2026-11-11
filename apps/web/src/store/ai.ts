@@ -15,6 +15,8 @@ export type Generation = {
   tokens: number;
   message: string;
   attempt: number;
+  /** Fraction (0–1) of the current step done, when the model reports it. */
+  progress?: number;
   /** Layered mode: each asset as it is painted and separated. */
   assets?: AssetStatus[];
 };
@@ -42,13 +44,16 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
  * Asks the server to generate a scene and follows its progress over SSE. The storyboard's beats land on the
  * timeline first; the finished scene replaces the current one as an undoable step.
  */
-export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean }, fromWelcome: boolean) {
+/** The visual directions the server paints in (packages/ai STYLES). */
+export type Style = "lofi" | "cinematic" | "retro";
+
+export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean; mode?: "layered" | "painting"; style?: Style; title?: string }, fromWelcome: boolean) {
   const s = useStudio.getState();
   if (s.generation?.status === "running") return;
   const [width, height] = SIZE[req.aspect];
   const duration = Math.min(30, Math.max(5, Math.round(req.duration)));
   if (fromWelcome || !s.spec) {
-    s.open({ version: 1, meta: { title: req.prompt.slice(0, 40), duration, fps: 30, width, height }, palette: {}, tracks: {}, layers: [], overlays: [], beats: [] });
+    s.open({ version: 1, meta: { title: req.title ?? req.prompt.slice(0, 40), duration, fps: 30, width, height }, palette: {}, tracks: {}, layers: [], overlays: [], beats: [] });
     useStudio.getState().set({ chat: [] });
   }
   say({ role: "user", text: req.prompt });
@@ -72,7 +77,7 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
   const es = (source = new EventSource(`/api/jobs/${jobId}/events`));
   const on = <T>(type: string, fn: (d: T) => void) => es.addEventListener(type, (ev) => fn(JSON.parse((ev as MessageEvent).data) as T));
 
-  on<{ phase: Phase; message: string }>("status", (d) => update({ phase: d.phase, message: d.message, tokens: 0 }));
+  on<{ phase: Phase; message: string; progress?: number }>("status", (d) => update({ phase: d.phase, message: d.message, tokens: 0, progress: d.progress }));
   // layered: the plan and each asset are reported as they arrive; the scene itself only changes on "done"
   on<{ plan: { title: string; mood: string; beats: SceneSpec["beats"]; characters: { id: string }[]; props: { id: string }[]; actions: { who: string; target: string; start: number; end: number }[] } }>("plan", ({ plan }) => {
     say({
@@ -181,7 +186,7 @@ function onShotEvents(on: On) {
   // every finished shot is stored with the scene (beside it, not as layers); failed ones too, so they can be redone alone
   on<ShotEvent>("shot", (d) => {
     const list = useStudio.getState().generation?.assets ?? [];
-    const label = `Cinematic shot ${d.id} (${d.start}–${d.end} s)${d.attempt && d.attempt > 1 ? `, try ${d.attempt}` : ""}`;
+    const label = `${d.id === "loop" ? "Natural motion loop" : `Cinematic shot ${d.id}`} (${d.start}–${d.end} s)${d.attempt && d.attempt > 1 ? `, try ${d.attempt}` : ""}`;
     const a: AssetStatus = { id: `shot:${d.id}`, label, status: d.status, message: d.message };
     update({ assets: list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a] });
     const st = useStudio.getState();
@@ -194,10 +199,10 @@ function onShotEvents(on: On) {
     const cost = d.shot.costUsd !== undefined ? `, about $${d.shot.costUsd.toFixed(2)}` : "";
     const tries = d.shot.attempts > 1 ? ` after ${d.shot.attempts} tries` : "";
     if (d.id === "loop" && d.shot.footage)
-      say({ role: "assistant", tone: d.status === "done" ? "success" : undefined, text: `Natural motion is on${tries} (${d.source}${cost}): the video model's ${d.end - d.start} s loop now plays over the scene${d.status === "review" ? `, but check it: ${d.message}` : ""}. The painted layers stay underneath; hide or delete the video_loop layer to edit them, or AI › Redo cinematic shots for another take.` });
+      say({ role: "assistant", tone: d.status === "done" ? "success" : undefined, text: `Natural motion is on${tries} (${d.source}${cost}): the video model's ${d.end - d.start} s loop now plays over the scene${d.status === "review" ? `, but check it: ${d.message}` : ""}. ${useStudio.getState().spec?.layers.some((l) => l.type === "painting") ? "The still painting stays underneath" : "The painted layers stay underneath; hide or delete the video_loop layer to edit them"}, or AI › Redo cinematic shots for another take.` });
     else if (d.status === "done") say({ role: "assistant", tone: "success", text: `Cinematic shot “${d.id}” is ready${tries} (${d.start}–${d.end} s, ${d.source}${cost}). It is saved with the project beside the editable scene.` });
     else if (d.status === "review") say({ role: "assistant", text: `Cinematic shot “${d.id}” was made${tries} but needs your review: ${d.message}. AI › Redo cinematic shots tries again.` });
-    else say({ role: "assistant", tone: "error", text: `Cinematic shot “${d.id}” failed${tries}: ${d.message}. The editable scene is unaffected; AI › Redo cinematic shots tries again.` });
+    else say({ role: "assistant", tone: "error", text: `${d.id === "loop" ? "The natural motion loop" : `Cinematic shot “${d.id}”`} failed${tries}: ${d.message}. The scene is unaffected; AI › Redo cinematic shots tries again.` });
   });
   on<{ items: { target: string; name: string; status: "pass" | "review" | "fail"; note?: string }[] }>("quality", (d) => {
     const open = d.items.filter((i) => i.status !== "pass");
@@ -229,7 +234,7 @@ export async function redoShots(ids?: string[]) {
   source?.close();
   const es = (source = new EventSource(`/api/jobs/${jobId}/events`));
   const on: On = (type, fn) => es.addEventListener(type, (ev) => fn(JSON.parse((ev as MessageEvent).data)));
-  on<{ message: string }>("status", (d) => update({ message: d.message }));
+  on<{ message: string; progress?: number }>("status", (d) => update({ message: d.message, progress: d.progress }));
   onShotEvents(on);
   on<{ message: string; fix?: string }>("error", (d) => {
     if (useStudio.getState().generation?.status === "cancelled") return;
@@ -316,7 +321,7 @@ export async function paintingToVideo() {
   source?.close();
   const es = (source = new EventSource(`/api/jobs/${jobId}/events`));
   const on = <T>(type: string, fn: (d: T) => void) => es.addEventListener(type, (ev) => fn(JSON.parse((ev as MessageEvent).data) as T));
-  on<{ message: string }>("status", (d) => update({ message: d.message }));
+  on<{ message: string; progress?: number }>("status", (d) => update({ message: d.message, progress: d.progress }));
   on<{ footage: { frames: string; count: number; fps: number } }>("footage", (d) => {
     const st = useStudio.getState();
     if (!st.spec) return;

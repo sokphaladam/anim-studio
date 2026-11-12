@@ -1,6 +1,6 @@
-// Builds the Windows installer: pnpm desktop:build → apps/desktop/release/Anim Studio Setup <version>.exe
+// Builds the Windows installer: npm run desktop:build → apps/desktop/release/Anim Studio Setup <version>.exe
 // The app is staged in .stage/ with a plain npm node_modules holding only better-sqlite3, so electron-builder can rebuild
-// it for Electron there without touching the workspace copy that pnpm dev and the tests use.
+// it for Electron there without touching the workspace copy that npm run dev and the tests use.
 import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,7 +17,7 @@ const run = (cmd, cwd = root) => execSync(cmd, { cwd, stdio: "inherit" });
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-run("pnpm --filter @anim/web build");
+run("npm run build -w @anim/web");
 await bundle({
   entryPoints: [join(here, "src/server.ts")],
   outfile: join(stage, "dist/server.mjs"),
@@ -36,6 +36,7 @@ cpSync(join(root, "apps/web/dist"), join(stage, "web"), { recursive: true });
 cpSync(join(root, "packages/ai/prompts"), join(stage, "prompts"), { recursive: true });
 cpSync(join(root, "packages/spec/examples"), join(stage, "examples"), { recursive: true });
 cpSync(join(root, "scripts/setup-ai.mjs"), join(stage, "setup-ai.mjs"));
+cpSync(join(root, "scripts/setup-painter.mjs"), join(stage, "setup-painter.mjs"));
 
 const deps = pkg("apps/server").dependencies;
 const version = pkg("apps/desktop").version;
@@ -54,7 +55,7 @@ await build({
     electronVersion: JSON.parse(readFileSync(join(here, "node_modules/electron/package.json"), "utf8")).version,
     directories: { output: join(here, "release") },
     files: ["main.mjs", "dist/**", "web/**", "prompts/**", "examples/**", "node_modules/**", "package.json"],
-    extraResources: [{ from: "setup-ai.mjs", to: "setup-ai.mjs" }],
+    extraResources: [{ from: "setup-ai.mjs", to: "setup-ai.mjs" }, { from: "setup-painter.mjs", to: "setup-painter.mjs" }],
     npmRebuild: true,
     // ffmpeg.exe must be a real file on disk to run
     asarUnpack: ["node_modules/ffmpeg-static/**"],

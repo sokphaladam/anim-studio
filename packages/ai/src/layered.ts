@@ -14,8 +14,8 @@ import { AIError, type Provider } from "./types";
 const Slug = z.string().regex(/^[a-z][a-z0-9_]*$/, "Use a lowercase word like \"girl\"");
 const Frac = z.number().min(0).max(1);
 const PlaceBox = z.tuple([Frac, Frac, Frac, Frac]);
-const IDLE = ["breathe", "bob", "blink"] as const;
-const AMBIENT = ["stars", "falling-leaves", "birds", "steam", "rain"] as const;
+export const IDLE = ["breathe", "bob", "blink"] as const;
+export const AMBIENT = ["stars", "falling-leaves", "birds", "steam", "rain"] as const;
 const FACES = ["happy", "sad", "surprised", "eyes-closed"] as const;
 
 export const LayeredPlanSchema = z.object({
@@ -164,7 +164,9 @@ export type LayeredEvent =
   | { type: "token"; phase: "plan"; tokens: number }
   | { type: "plan"; plan: LayeredPlan; meta: SceneSpec["meta"] }
   | { type: "asset"; id: string; label: string; status: "running" | "done" | "review" | "skipped" | "failed"; src?: string; message?: string }
-  | { type: "done"; spec: SceneSpec; repairs: number };
+  | { type: "done"; spec: SceneSpec; repairs: number }
+  /** What an agent saw, decided or is fixing, in a sentence for the chat. */
+  | { type: "thought"; text: string; details?: string[] };
 
 const WHITE_BG = "simple background, white background";
 // light things (clouds, steam, the moon) vanish on white, so they are painted on grey to be cut out
@@ -187,7 +189,7 @@ const sizeFor = (aspect: number) => SDXL_SIZES.reduce((b, s) => (Math.abs(Math.l
 const MAX_TURN_SECONDS = 2;
 /** Default ambient loop lengths (seconds), fitted to the scene so the video loops seamlessly. */
 const AMBIENT_PERIOD = { stars: 6, "falling-leaves": 6, birds: 12, steam: 3, rain: 1 } as const;
-const label = (id: string) => id.replace(/_/g, " ");
+export const label = (id: string) => id.replace(/_/g, " ");
 /** How each face slot is found on the head, and the words that paint each of its options (and what to avoid). */
 const SLOT_FIND: Record<FaceSlot, string> = { eyes: "eyes", mouth: "mouth", brows: "eyebrows" };
 const SLOT_WORDS: Record<string, [string, string]> = {
@@ -217,7 +219,55 @@ const sceneryCheck = (dropped: number): Check | null =>
 
 /** Palette distance (0–441) past which a reused character's new painting is flagged as possibly someone else. */
 const IDENTITY_DRIFT = 60;
-const r2 = (v: number) => +v.toFixed(2);
+export const r2 = (v: number) => +v.toFixed(2);
+
+/** Ambient effects drawn by the engine, looping with the scene: stars and birds go to `sky`, the rest to `fx`. */
+export function ambientLayers(ambient: LayeredPlan["ambient"], W: number, H: number, duration: number, propBoxes: Map<string, [number, number, number, number]>, sky: Layer[], fx: Layer[]) {
+  for (const a of ambient) {
+    const period = fitPeriod(AMBIENT_PERIOD[a.type], duration);
+    const [x0, y0, x1, y1] = (a.box ?? (a.type === "stars" || a.type === "birds" ? [0, 0, 1, 0.45] : [0, 0, 1, 1])).map((v, i) => r2(v * (i % 2 ? H : W)));
+    const id = (n: number = 1): string => (fx.concat(sky).some((l) => l.id === `${a.type}-${n}`) ? id(n + 1) : `${a.type}-${n}`);
+    if (a.type === "steam") {
+      const b = propBoxes.get(a.at!);
+      // the steam rides on its cup, so it rises from it wherever the cup is carried
+      if (b) fx.push({ id: id(), type: "steam", parent: a.at, params: { x: r2((b[0] + b[2]) / 2), y: r2(b[1] + (b[3] - b[1]) * 0.1), height: r2(Math.max(60, (b[3] - b[1]) * 1.6)), width: r2(Math.max(8, (b[2] - b[0]) * 0.18)), period } });
+    } else if (a.type === "stars") sky.unshift({ id: id(), type: "stars", params: { x0, y0, x1, y1, period } });
+    else if (a.type === "birds") sky.push({ id: id(), type: "birds", params: { y0, y1, period } });
+    else if (a.type === "falling-leaves") fx.push({ id: id(), type: "falling-leaves", params: { x0, y0, x1, y1, period } });
+    else fx.push({ id: id(), type: "rain", params: { x0, y0, x1, y1, intensity: 0.8 } });
+  }
+}
+
+/**
+ * What moving a piece uncovers: its pixels next to the body, filled from the body's own colors (a diffusion repaint
+ * here keeps painting a new face behind the head). Returns the filled body and each piece's joint with it.
+ */
+export function fillBehind(src: Raster, rest: Mask, pieces: { id: string; mask: Mask }[], sw: number, sh: number) {
+  let body = rest, bodyR = src, hidden = 0, filled = 0;
+  const joints = new Map<string, [number, number] | null>();
+  for (const p of pieces) {
+    const pb = maskBox(p.mask, sw)!;
+    const reach = Math.max(4, Math.round(Math.min(pb[2] - pb[0], pb[3] - pb[1]) * 0.25));
+    joints.set(p.id, neckPoint(p.mask, rest, sw, sh, reach));
+    const band = intersect(p.mask, grow(rest, sw, sh, reach));
+    // fill from colors, not from the dark outline strokes around them (those smear into streaks); what colors alone
+    // can't reach is filled from everything
+    // the outline between the body and the part is passed through but not copied (and kept as drawn)
+    const clean = withoutInk(bodyR, body);
+    const across = union(band, intersect(subtract(body, clean), grow(band, sw, sh, 4)));
+    const spread = smear(bodyR, across, clean);
+    const got = intersect(band, spread.filled);
+    const first = { r: paste(bodyR, spread.r, got), filled: got };
+    const rest_ = subtract(band, first.filled);
+    const second = count(rest_) ? smear(first.r, rest_, union(body, first.filled)) : null;
+    const s = { r: second ? second.r : first.r, filled: second ? union(first.filled, second.filled) : first.filled };
+    hidden += count(band);
+    filled += count(s.filled);
+    bodyR = s.r;
+    body = union(body, s.filled);
+  }
+  return { body, bodyR, hidden, filled, joints };
+}
 
 /** Plans, paints, separates and rigs a layered scene. Throws (with a fix) on failure; the caller's scene is untouched until "done". */
 export async function generateLayered(req: GenerateRequest, provider: Provider, tools: LayeredTools, emit: (e: LayeredEvent) => void, signal?: AbortSignal): Promise<SceneSpec> {
@@ -225,7 +275,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   const paintPrompt = (subject: string) => paintTags(subject, req.style);
   const NEGATIVE = negativeFor(req.style);
   const { painter } = tools;
-  if (!painter.removeBackground || !painter.segment || !painter.inpaint) throw new AIError("The image painter can't separate layers", "Install the segmentation models: pnpm setup:painter --layered");
+  if (!painter.removeBackground || !painter.segment || !painter.inpaint) throw new AIError("The image painter can't separate layers", "Install the segmentation models: npm run setup:painter --layered");
   const [W, H] = ASPECT_SIZE[req.aspect];
   const duration = Math.min(30, Math.max(5, req.duration));
   const stage = (phase: LayeredStage, message: string) => {
@@ -455,29 +505,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
     // what moving a piece uncovers: its pixels next to the body, filled from the body's own colors (a diffusion repaint
     // here keeps painting a new face behind the head)
     stage("reconstruct", `Filling in behind the ${label(c.id)}'s moving parts`);
-    let body = rest, bodyR = src, hidden = 0, filled = 0;
-    const joints = new Map<string, [number, number] | null>();
-    for (const p of pieces) {
-      const pb = maskBox(p.mask, sw)!;
-      const reach = Math.max(4, Math.round(Math.min(pb[2] - pb[0], pb[3] - pb[1]) * 0.25));
-      joints.set(p.id, neckPoint(p.mask, rest, sw, sh, reach));
-      const band = intersect(p.mask, grow(rest, sw, sh, reach));
-      // fill from colors, not from the dark outline strokes around them (those smear into streaks); what colors alone
-      // can't reach is filled from everything
-      // the outline between the body and the part is passed through but not copied (and kept as drawn)
-      const clean = withoutInk(bodyR, body);
-      const across = union(band, intersect(subtract(body, clean), grow(band, sw, sh, 4)));
-      const spread = smear(bodyR, across, clean);
-      const got = intersect(band, spread.filled);
-      const first = { r: paste(bodyR, spread.r, got), filled: got };
-      const rest_ = subtract(band, first.filled);
-      const second = count(rest_) ? smear(first.r, rest_, union(body, first.filled)) : null;
-      const s = { r: second ? second.r : first.r, filled: second ? union(first.filled, second.filled) : first.filled };
-      hidden += count(band);
-      filled += count(s.filled);
-      bodyR = s.r;
-      body = union(body, s.filled);
-    }
+    const { body, bodyR, hidden, filled, joints } = fillBehind(src, rest, pieces, sw, sh);
     // the reconstructed body (before cutting out) and its mask are kept: they are what the body is re-cut from
     save(`${c.id}_body_fill`, bodyR, { kind: "source", from: `${c.id}_source` });
     save(`${c.id}_body_mask`, maskImage(body, sw, sh), { kind: "mask", from: `${c.id}_source` });
@@ -675,19 +703,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   }
 
   // ambient effects: drawn by the engine, looping with the scene
-  for (const a of plan.ambient) {
-    const period = fitPeriod(AMBIENT_PERIOD[a.type], duration);
-    const [x0, y0, x1, y1] = (a.box ?? (a.type === "stars" || a.type === "birds" ? [0, 0, 1, 0.45] : [0, 0, 1, 1])).map((v, i) => r2(v * (i % 2 ? H : W)));
-    const id = (n: number = 1): string => (fx.concat(sky).some((l) => l.id === `${a.type}-${n}`) ? id(n + 1) : `${a.type}-${n}`);
-    if (a.type === "steam") {
-      const b = propBoxes.get(a.at!);
-      // the steam rides on its cup, so it rises from it wherever the cup is carried
-      if (b) fx.push({ id: id(), type: "steam", parent: a.at, params: { x: r2((b[0] + b[2]) / 2), y: r2(b[1] + (b[3] - b[1]) * 0.1), height: r2(Math.max(60, (b[3] - b[1]) * 1.6)), width: r2(Math.max(8, (b[2] - b[0]) * 0.18)), period } });
-    } else if (a.type === "stars") sky.unshift({ id: id(), type: "stars", params: { x0, y0, x1, y1, period } });
-    else if (a.type === "birds") sky.push({ id: id(), type: "birds", params: { y0, y1, period } });
-    else if (a.type === "falling-leaves") fx.push({ id: id(), type: "falling-leaves", params: { x0, y0, x1, y1, period } });
-    else fx.push({ id: id(), type: "rain", params: { x0, y0, x1, y1, intensity: 0.8 } });
-  }
+  ambientLayers(plan.ambient, W, H, duration, propBoxes, sky, fx);
 
   // timed actions → keyframes
   stage("animate", "Turning the motions into keyframes");

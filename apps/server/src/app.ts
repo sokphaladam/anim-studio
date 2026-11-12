@@ -12,12 +12,16 @@ import type { SceneSpec } from "@anim/spec";
 import { healthRoutes } from "./routes/health";
 import { projectRoutes } from "./routes/projects";
 import { packageRoutes } from "./routes/package";
+import { recommendedModel, settingsRoutes, systemInfo } from "./routes/settings";
 
 const DATA = fileURLToPath(new URL("../../../data/", import.meta.url));
 
 /** Builds the API. `provider`, `painter` and `store` can be swapped in tests. */
 export function buildApp(opts: { config?: AIConfig; provider?: Provider; painter?: Painter; store?: Store; cloudVideo?: VideoProvider | null; pollMs?: number } = {}) {
   const config = opts.config ?? configFromEnv(process.env);
+  const system = systemInfo();
+  // no model chosen yet: start with the largest one this computer can run
+  if (!opts.config && !process.env.OLLAMA_MODEL) config.ollamaModel = recommendedModel(system);
   const dbPath = process.env.DB_PATH || join(DATA, "anim-studio.db");
   const store = opts.store ?? createStore(dbPath);
   const imagesDir = process.env.IMAGES_DIR || join(dirname(dbPath), "images");
@@ -84,6 +88,7 @@ export function buildApp(opts: { config?: AIConfig; provider?: Provider; painter
   // what the start page quotes before paid work: the price of a shot of each allowed length, and the job's limit
   const quote = cloud && { budgetUsd: maxCostUsd, retries: media.retries, usdBySeconds: Object.fromEntries([4, 5, 6, 7, 8, 9, 10].map((s) => [s, cloud.estimateUsd(s) ?? null])) };
   healthRoutes(app, config, painterCfg, opts.painter, cloud ? cloud.name : null, quote || null);
+  settingsRoutes(app, config, system, process.env.ANIM_ENV_FILE, painterCfg);
   app.addHook("onClose", async () => store.close());
   return app;
 }

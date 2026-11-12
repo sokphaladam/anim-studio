@@ -47,7 +47,7 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
 /** The visual directions the server paints in (packages/ai STYLES). */
 export type Style = "lofi" | "cinematic" | "retro";
 
-export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean; mode?: "layered" | "painting"; style?: Style; title?: string }, fromWelcome: boolean) {
+export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean; mode?: "layered" | "painting" | "agent"; style?: Style; title?: string }, fromWelcome: boolean) {
   const s = useStudio.getState();
   if (s.generation?.status === "running") return;
   const [width, height] = SIZE[req.aspect];
@@ -66,7 +66,7 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
     if (!res.ok || !body.jobId) throw new Error(body.error ?? `Server error ${res.status}`);
     jobId = body.jobId;
   } catch (e) {
-    const msg = e instanceof TypeError || /Failed to fetch|ECONNREFUSED|50\d/.test(String(e)) ? "The AI server is not running — start it with pnpm dev" : (e as Error).message;
+    const msg = e instanceof TypeError || /Failed to fetch|ECONNREFUSED|50\d/.test(String(e)) ? "The AI server is not running — start it with npm run dev" : (e as Error).message;
     update({ status: "error", message: msg });
     say({ role: "assistant", text: msg, tone: "error" });
     return;
@@ -86,6 +86,8 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
       details: [...plan.beats.map((b) => `${b.at}s · ${b.label}`), ...plan.actions.map((a) => `${a.start}–${a.end}s · ${a.who} looks at ${a.target}`)],
     });
   });
+  // agent mode: what it saw, decided and is fixing, as it goes
+  on<{ text: string; details?: string[] }>("thought", (d) => say({ role: "assistant", text: d.text, details: d.details }));
   on<AssetStatus>("asset", (d) => {
     const list = useStudio.getState().generation?.assets ?? [];
     const a: AssetStatus = { id: d.id, label: d.label, status: d.status, message: d.message };
@@ -135,7 +137,7 @@ export async function generate(req: { prompt: string; duration: number; aspect: 
     es.close();
     if (useStudio.getState().generation?.status === "running") {
       update({ status: "error", message: "Lost connection to the AI server" });
-      say({ role: "assistant", tone: "error", text: "Lost connection to the AI server. Is pnpm dev still running?" });
+      say({ role: "assistant", tone: "error", text: "Lost connection to the AI server. Is npm run dev still running?" });
     }
   };
 }
@@ -170,7 +172,7 @@ export async function editWithAI(instruction: string) {
   } catch (e) {
     if (ac.signal.aborted) return;
     const err = e as Error & { fix?: string; errors?: string[] };
-    const msg = e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : err.message;
+    const msg = e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : err.message;
     update({ status: "error", message: msg });
     say({ role: "assistant", tone: "error", text: err.fix ? `${msg}. ${err.fix}` : msg, details: err.errors?.slice(0, 8) });
   } finally {
@@ -225,7 +227,7 @@ export async function redoShots(ids?: string[]) {
     if (!res.ok || !body.jobId) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
     jobId = body.jobId;
   } catch (e) {
-    const msg = e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message;
+    const msg = e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message;
     update({ status: "error", message: msg });
     say({ role: "assistant", tone: "error", text: msg });
     return;
@@ -287,7 +289,7 @@ export async function animatePainting() {
     say({ role: "assistant", tone: "success", text: d.motions.length ? `The painting moves now: ${kinds.join(", ")}.${d.indoor && d.windows?.length ? ` Rain stays in the ${d.windows.length} window(s).` : ""} Undo (Ctrl+Z) to go back.` : "I couldn't find anything in the painting that can move." });
     st.set({ playing: true });
   } catch (e) {
-    const msg = e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message;
+    const msg = e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message;
     update({ status: "error", message: msg });
     say({ role: "assistant", tone: "error", text: msg });
   }
@@ -312,7 +314,7 @@ export async function paintingToVideo() {
     if (!res.ok || !body.jobId) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
     jobId = body.jobId;
   } catch (e) {
-    const msg = e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message;
+    const msg = e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message;
     update({ status: "error", message: msg });
     say({ role: "assistant", tone: "error", text: msg });
     return;

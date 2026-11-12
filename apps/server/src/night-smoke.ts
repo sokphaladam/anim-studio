@@ -1,7 +1,7 @@
 // Draws "Night smoke", a hand-drawn duotone lofi loop: a girl at a counter at night, chin on her hand, a ribbon of
 // cigarette smoke curling across a starry sky. Built only from the editor's own brush / fill / frame-by-frame layers,
 // so it opens, plays and edits in the app like anything drawn by hand.
-// Usage: pnpm --filter @anim/server exec tsx src/night-smoke.ts [--export]
+// Usage: npm exec -w @anim/server -- tsx src/night-smoke.ts [--export]
 // Writes data/night-smoke/ (scene.json + check frames), saves it as a project, and with --export an MP4 (YouTube preset).
 import { createRenderer, validateScene } from "@anim/engine";
 import type { SceneSpec, Stroke } from "@anim/spec";

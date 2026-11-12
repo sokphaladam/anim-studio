@@ -1,5 +1,5 @@
 // Runs layered generation for real (language model + ComfyUI), then renders check frames and a looping preview MP4.
-// Usage: pnpm generate:layered ["prompt"] [seconds]. Writes data/layered/<time>/: scene.json, the part images, t-<s>.png and preview.mp4.
+// Usage: npm run generate:layered ["prompt"] [seconds]. Writes data/layered/<time>/: scene.json, the part images, t-<s>.png and preview.mp4.
 import { comfyui, configFromEnv, generateLayered, providerFor } from "@anim/ai";
 import { createRenderer, imageSources, registerImage } from "@anim/engine";
 import { createCanvas, loadImage } from "@napi-rs/canvas";

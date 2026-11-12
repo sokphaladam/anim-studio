@@ -1,27 +1,30 @@
 {
   "name": "anim-studio",
   "private": true,
-  "packageManager": "pnpm@9.15.9",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
     "predev": "node scripts/setup-ai.mjs --no-pull",
-    "dev": "pnpm --parallel --filter @anim/web --filter @anim/server dev",
-    "build": "pnpm -r build",
-    "desktop": "node scripts/setup-ai.mjs --no-pull && pnpm --parallel --filter @anim/web --filter @anim/server --filter @anim/desktop dev",
-    "desktop:build": "pnpm --filter @anim/desktop dist",
+    "dev": "node scripts/dev.mjs @anim/web @anim/server",
+    "build": "npm run build --workspaces --if-present",
+    "desktop": "node scripts/setup-ai.mjs --no-pull && node scripts/dev.mjs @anim/web @anim/server @anim/desktop",
+    "desktop:build": "npm run dist -w @anim/desktop",
     "setup:ai": "node scripts/setup-ai.mjs",
     "test": "vitest run",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
-    "storybook": "pnpm --filter @anim/ui storybook",
+    "storybook": "npm run storybook -w @anim/ui",
     "screenshots": "node scripts/screenshots.mjs",
     "compare": "node scripts/compare-reference.mjs",
     "e2e:flipbook": "node scripts/flipbook-e2e.mjs",
     "e2e:lofi": "node scripts/lofi-draw-e2e.mjs",
-    "generate:layered": "pnpm --filter @anim/server exec tsx src/layered-cli.ts",
+    "generate:layered": "npm exec -w @anim/server -- tsx src/layered-cli.ts",
     "setup:painter": "node scripts/setup-painter.mjs",
     "e2e:layered": "node scripts/layered-e2e.mjs"
   },

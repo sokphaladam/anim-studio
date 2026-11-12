@@ -77,7 +77,7 @@ function PartPanel({ spec, id, commit }: { spec: SceneSpec; id: string; commit: 
       const cur = useStudio.getState().spec;
       if (cur?.assets?.[id]) commit(`Re-cut ${id}`, applyRecut(cur, id, body, cleanup));
     } catch (e) {
-      setError(e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message);
+      setError(e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message);
     } finally {
       setBusy(false);
     }

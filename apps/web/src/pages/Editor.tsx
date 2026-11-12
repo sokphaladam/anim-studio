@@ -47,7 +47,7 @@ function useAutosave() {
         } catch {
           // too large for browser storage
         }
-        if (!warned) toast({ title: "Autosave failed", description: "Can't reach the server (is pnpm dev running?). A backup is kept in this browser.", tone: "warning" });
+        if (!warned) toast({ title: "Autosave failed", description: "Can't reach the server (is npm run dev running?). A backup is kept in this browser.", tone: "warning" });
         warned = true;
       }
     }, 30_000);

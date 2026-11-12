@@ -10,7 +10,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@anim/server": "workspace:^",
+    "@anim/server": "*",
     "@fastify/static": "^10.1.8"
   },
   "devDependencies": {

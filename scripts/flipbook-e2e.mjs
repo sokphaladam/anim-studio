@@ -1,4 +1,4 @@
-// Milestone 2 check: draw a 12-frame flipbook, onion skin, play at 12 fps, undo. Usage: pnpm dev, then node scripts/flipbook-e2e.mjs [outDir]
+// Milestone 2 check: draw a 12-frame flipbook, onion skin, play at 12 fps, undo. Usage: npm run dev, then node scripts/flipbook-e2e.mjs [outDir]
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launch } from "./browser.mjs";

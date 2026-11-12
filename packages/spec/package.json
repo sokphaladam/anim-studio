@@ -15,6 +15,6 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
-    "@anim/engine": "workspace:*"
+    "@anim/engine": "*"
   }
 }

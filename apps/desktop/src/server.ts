@@ -13,7 +13,7 @@ export async function start(webDir: string, port: number): Promise<string> {
   try {
     await app.listen({ port, host: "127.0.0.1" });
   } catch {
-    // port taken (another copy, or pnpm dev): any free port still works, only this session's window layout is lost
+    // port taken (another copy, or npm run dev): any free port still works, only this session's window layout is lost
     await app.listen({ port: 0, host: "127.0.0.1" });
   }
   const a = app.server.address();

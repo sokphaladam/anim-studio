@@ -54,7 +54,7 @@ function Director() {
       if (!res.ok || !body.direction || !body.spec) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
       setPlan({ direction: body.direction, spec: body.spec, base });
     } catch (e) {
-      setError(e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message);
+      setError(e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message);
     } finally {
       setBusy(false);
     }

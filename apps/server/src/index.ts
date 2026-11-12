@@ -4,6 +4,8 @@ import { buildApp } from "./app";
 
 const envFile = fileURLToPath(new URL("../../../.env", import.meta.url));
 if (existsSync(envFile)) process.loadEnvFile(envFile);
+// Settings chosen in the app are saved here
+process.env.ANIM_ENV_FILE ||= envFile;
 
 const port = Number(process.env.API_PORT ?? 8790);
 buildApp()

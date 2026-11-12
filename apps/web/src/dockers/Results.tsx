@@ -128,7 +128,7 @@ function Quality({ spec, shots }: { spec: SceneSpec; shots: CinematicShot[] }) {
   const run = () =>
     fetch("/api/quality", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec }) })
       .then((r) => r.json() as Promise<{ items: Item[] }>)
-      .then((r) => setReport({ for: spec, items: r.items }), () => setReport({ error: "Can't reach the server. Is pnpm dev running?" }));
+      .then((r) => setReport({ for: spec, items: r.items }), () => setReport({ error: "Can't reach the server. Is npm run dev running?" }));
   const items = report && "items" in report ? report.items : null;
   const stale = report && "for" in report && report.for !== spec;
   const shotItems = shots.flatMap((s) => (s.checks.length ? s.checks : [{ name: "made", status: s.status === "failed" ? ("fail" as const) : ("pass" as const), note: s.review }]).map((c) => ({ ...c, target: `shot ${s.id}` })));

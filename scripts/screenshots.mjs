@@ -1,4 +1,4 @@
-// Screenshots of every screen at the sizes the polish checklist names. Usage: pnpm dev, then: node scripts/screenshots.mjs [outDir]
+// Screenshots of every screen at the sizes the polish checklist names. Usage: npm run dev, then: node scripts/screenshots.mjs [outDir]
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { launch } from "./browser.mjs";

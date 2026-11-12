@@ -1,5 +1,5 @@
 // Renders reference/autumn-window.html and our engine (/render/autumn-window) at the same times and reports pixel differences.
-// Usage: pnpm dev (in another terminal), then: node scripts/compare-reference.mjs [outDir]
+// Usage: npm run dev (in another terminal), then: node scripts/compare-reference.mjs [outDir]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { launch } from "./browser.mjs";

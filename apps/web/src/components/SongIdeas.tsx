@@ -25,7 +25,7 @@ export function SongIdeas({ onPick, disabled }: { onPick: (prompt: string, title
       if (!res.ok || !body.ideas) throw new Error(body.fix ? `${body.error}. ${body.fix}` : (body.error ?? `Server error ${res.status}`));
       setIdeas(body.ideas);
     } catch (e) {
-      setError(e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message);
+      setError(e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message);
     } finally {
       setBusy(false);
     }

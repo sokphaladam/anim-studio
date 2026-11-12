@@ -12,9 +12,9 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@anim/ai": "workspace:^",
-    "@anim/engine": "workspace:^",
-    "@anim/spec": "workspace:^",
+    "@anim/ai": "*",
+    "@anim/engine": "*",
+    "@anim/spec": "*",
     "@fontsource-variable/fraunces": "^5.3.0",
     "@fontsource/figtree": "^5.3.0",
     "@napi-rs/canvas": "^1.1.0",

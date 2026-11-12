@@ -62,12 +62,12 @@ export function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         if (data) {
           const d = JSON.parse(data) as { message: string; fix?: string };
           setSt(d.message === "Cancelled" ? { phase: "idle" } : { phase: "error", message: d.message, fix: d.fix });
-        } else setSt((s) => (s.phase === "running" ? { phase: "error", message: "Lost the connection to the server", fix: "Is pnpm dev still running?" } : s));
+        } else setSt((s) => (s.phase === "running" ? { phase: "error", message: "Lost the connection to the server", fix: "Is npm run dev still running?" } : s));
         stop();
       });
       src.addEventListener("end", stop);
     } catch {
-      setSt({ phase: "error", message: "Can't reach the server", fix: "Is pnpm dev running?" });
+      setSt({ phase: "error", message: "Can't reach the server", fix: "Is npm run dev running?" });
     }
   }
 

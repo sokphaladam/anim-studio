@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AIError } from "../types";
@@ -109,7 +109,7 @@ const segmentWorkflow = (image: string, text: string) => ({
 });
 /** Masked img2img with the painter's own checkpoint (no inpainting model needed). */
 const inpaintWorkflow = (a: InpaintArgs, image: string, mask: string) => ({
-  ckpt: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: CHECKPOINT } },
+  ckpt: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: paintCheckpoint() } },
   img: { class_type: "LoadImage", inputs: { image } },
   mask: { class_type: "LoadImageMask", inputs: { image: mask, channel: "red" } },
   pos: { class_type: "CLIPTextEncode", inputs: { clip: ["ckpt", 1], text: a.positive } },
@@ -159,12 +159,25 @@ export function videoWorkflow(a: AnimateArgs, image: string, turbo = false, loop
 }
 
 export const CHECKPOINT = "animagine-xl-4.0-opt.safetensors";
+/** The checkpoint the user picked in Settings (PAINT_CHECKPOINT), else Animagine. Read per image, so a new pick applies at once. */
+export const paintCheckpoint = () => process.env.PAINT_CHECKPOINT || CHECKPOINT;
+
+/** Painting checkpoints ComfyUI can load: from ComfyUI itself when it runs (COMFY_URL may be another PC), else from the install's folder. */
+export async function paintCheckpoints(opts: { url: string; dir: string }): Promise<string[]> {
+  const fromComfy = await fetch(`${opts.url.replace(/\/$/, "")}/models/checkpoints`, { signal: AbortSignal.timeout(2000) })
+    .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
+    .catch(() => null);
+  const dir = join(comfyInstall(opts.dir).comfy, "models", "checkpoints");
+  const files = Array.isArray(fromComfy) ? (fromComfy as string[]) : existsSync(dir) ? readdirSync(dir) : [];
+  // the segmentation model sits in the same folder but can't paint
+  return files.filter((f) => /\.(safetensors|ckpt)$/.test(f) && f !== SEGMENT_MODEL);
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** SDXL text-to-image graph in ComfyUI's API format. 28 steps / cfg 5 / Euler a are the checkpoint's recommended settings. */
 function workflow(a: PaintArgs) {
   return {
-    ckpt: a.model ? { class_type: "DiffusersLoader", inputs: { model_path: a.model } } : { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: CHECKPOINT } },
+    ckpt: a.model ? { class_type: "DiffusersLoader", inputs: { model_path: a.model } } : { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: paintCheckpoint() } },
     pos: { class_type: "CLIPTextEncode", inputs: { clip: ["ckpt", 1], text: a.positive } },
     neg: { class_type: "CLIPTextEncode", inputs: { clip: ["ckpt", 1], text: a.negative } },
     latent: { class_type: "EmptyLatentImage", inputs: { width: a.width, height: a.height, batch_size: 1 } },
@@ -176,7 +189,7 @@ function workflow(a: PaintArgs) {
 
 /**
  * Where ComfyUI is installed in `dir` and how to start it: the Windows portable NVIDIA build, or a git checkout
- * with its own .venv (macOS uses Apple's GPU via PyTorch MPS, Linux CUDA). Both are made by pnpm setup:painter.
+ * with its own .venv (macOS uses Apple's GPU via PyTorch MPS, Linux CUDA). Both are made by npm run setup:painter.
  */
 export function comfyInstall(dir: string) {
   const portable = join(dir, "ComfyUI_windows_portable");
@@ -190,7 +203,7 @@ export function comfyInstall(dir: string) {
 /** Whether ComfyUI answers, and whether an install exists that can be started. */
 export async function comfyHealth(opts: { url: string; dir: string }) {
   const models = join(comfyInstall(opts.dir).comfy, "models");
-  const installed = existsSync(join(models, "checkpoints", CHECKPOINT));
+  const installed = existsSync(join(models, "checkpoints", paintCheckpoint()));
   const video = existsSync(join(models, "diffusion_models", VIDEO_MODEL));
   const layered = existsSync(join(models, "checkpoints", SEGMENT_MODEL)) && existsSync(join(models, "background_removal", BG_REMOVAL_MODEL));
   try {
@@ -218,7 +231,7 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
   async function ensureRunning(signal?: AbortSignal) {
     const h = await comfyHealth({ url, dir: opts.dir });
     if (h.running) return;
-    if (!h.installed) throw new AIError("The image painter isn't installed", "Run pnpm setup:painter (downloads about 9 GB), or choose Vector.");
+    if (!h.installed) throw new AIError("The image painter isn't installed", "Run npm run setup:painter (downloads about 9 GB), or choose Vector.");
     starting ??= (async () => {
       const c = comfyInstall(opts.dir);
       // our ComfyUI nodes (the seamless loop), next to this file in the repo; skipped where it isn't (a bundled build)
@@ -327,13 +340,13 @@ export function comfyui(opts: { url: string; dir: string }): Painter {
     paint: (a) => run(workflow(a), a.signal, 900, "painter", a.onProgress),
     async animate(a) {
       const image = await upload(a.image, "anim-studio-start.png", a.signal);
-      // the turbo LoRA when installed (pnpm setup:painter --video) unless VIDEO_TURBO=0: 4 steps instead of 20
+      // the turbo LoRA when installed (npm run setup:painter --video) unless VIDEO_TURBO=0: 4 steps instead of 20
       // shortcut: checks this disk, so a remote COMFY_URL uses the slow path; ask /models/loras if that setup matters
       const turbo = process.env.VIDEO_TURBO !== "0" && existsSync(join(comfyInstall(opts.dir).comfy, "models", "loras", VIDEO_TURBO_LORA));
       // a 5 s 1280×704 clip takes ~20 min on a 12 GB card at 20 steps, a few minutes with the turbo LoRA
-      // the loop node is ours (packages/ai/comfy): copied in whenever the app starts ComfyUI, and by pnpm setup:painter --video
+      // the loop node is ours (packages/ai/comfy): copied in whenever the app starts ComfyUI, and by npm run setup:painter --video
       if (a.loop && !(await fetch(`${url}/object_info/Wan22LoopLatent`).then((r) => r.json(), () => ({})).then((o) => "Wan22LoopLatent" in o)))
-        throw new AIError("The video model can't make looping clips yet", "Close the ComfyUI window (or restart the PC) so the app restarts it with the loop node, or run pnpm setup:painter --video.");
+        throw new AIError("The video model can't make looping clips yet", "Close the ComfyUI window (or restart the PC) so the app restarts it with the loop node, or run npm run setup:painter --video.");
       return run(videoWorkflow(a, image, turbo, !!a.loop), a.signal, 3600, "video model", a.onProgress);
     },
     async removeBackground(png, signal) {

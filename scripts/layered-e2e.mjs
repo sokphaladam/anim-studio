@@ -14,7 +14,7 @@ mkdirSync(out, { recursive: true });
 
 const procs = [];
 const start = (args, cwd) => {
-  const p = spawn("pnpm", args, { cwd, env: { ...process.env, API_PORT }, stdio: "ignore", shell: true });
+  const p = spawn("npm", args, { cwd, env: { ...process.env, API_PORT }, stdio: "ignore", shell: true });
   procs.push(p);
 };
 // wait for taskkill: process.exit right after would leave the servers holding the ports for the next run
@@ -33,8 +33,8 @@ const check = (ok, what) => {
   if (!ok) failed++;
 };
 
-start(["exec", "tsx", "test/fake-layered-server.ts"], resolve(root, "apps/server"));
-start(["exec", "vite", "--port", WEB_PORT, "--strictPort"], resolve(root, "apps/web"));
+start(["exec", "--", "tsx", "test/fake-layered-server.ts"], resolve(root, "apps/server"));
+start(["exec", "--", "vite", "--port", WEB_PORT, "--strictPort"], resolve(root, "apps/web"));
 let browser;
 try {
   browser = await launch();

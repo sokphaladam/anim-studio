@@ -1,5 +1,5 @@
 // Installs Ollama if missing, starts it, and pulls the model from .env (OLLAMA_MODEL). Safe to re-run.
-// Usage: pnpm setup:ai [--no-pull]. Runs before `pnpm dev` with --no-pull (the server pulls the model in the background).
+// Usage: npm run setup:ai [--no-pull]. Runs before `npm run dev` with --no-pull (the server pulls the model in the background).
 // Skipped in CI, when AI_PROVIDER=openai-compatible, or with OLLAMA_AUTO_SETUP=0.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -70,8 +70,8 @@ if (!models) {
   let bin = findOllama();
   if (!bin) {
     if (!install() || !(bin = findOllama())) {
-      log("Could not install Ollama automatically. Install it from https://ollama.com/download, then run pnpm setup:ai.");
-      process.exit(0); // don't block `pnpm dev`; the app explains what is missing
+      log("Could not install Ollama automatically. Install it from https://ollama.com/download, then run npm run setup:ai.");
+      process.exit(0); // don't block `npm run dev`; the app explains what is missing
     }
   }
   models = await waitForServer(3000); // the Windows/macOS app starts the server itself after installing

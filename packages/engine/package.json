@@ -11,7 +11,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@anim/spec": "workspace:*",
+    "@anim/spec": "*",
     "perfect-freehand": "^1.2.3",
     "zod": "^4.1.0"
   },

@@ -1,8 +1,9 @@
-import { Button, Dialog, Dropdown, NumberField, StatusPill, Toggle, cx, useToast, type MenuAction } from "@anim/ui";
-import { Clapperboard, Ellipsis, Film, Plus, Wind, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
+import { Button, Dialog, Dropdown, IconButton, NumberField, StatusPill, Toggle, cx, useToast, type MenuAction } from "@anim/ui";
+import { Clapperboard, Ellipsis, Film, Plus, Settings, Wind, RectangleHorizontal, RectangleVertical, Sparkles, Square } from "lucide-react";
 import type { SceneSpec } from "@anim/spec";
 import { useEffect, useMemo, useState } from "react";
 import { SceneThumb } from "../components/SceneThumb";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { SongIdeas } from "../components/SongIdeas";
 import { useAIStatus } from "../components/useAIStatus";
 import { generate, type Style } from "../store/ai";
@@ -15,6 +16,7 @@ const ASPECT_ICON = { "16:9": RectangleHorizontal, "9:16": RectangleVertical, "1
 const MODES = [
   { id: "painting", label: "Single painting", hint: "One painting of the whole scene, moved by the video AI. Everything stays where it was painted. Best look." },
   { id: "layered", label: "Editable layers", hint: "Characters and props as separate parts you can edit and re-animate. Parts may not line up." },
+  { id: "agent", label: "AI agent (image first)", hint: "Paints the whole scene first, then the AI looks at it, cuts what should move into layers and animates it. Parts line up with the picture." },
 ] as const;
 // labels for packages/ai STYLES (the web app doesn't import the AI package)
 const STYLES: { id: Style; label: string; hint: string }[] = [
@@ -75,10 +77,11 @@ export function Welcome() {
   const [aspect, setAspect] = useState<Aspect>("16:9");
   const [prompt, setPrompt] = useState("");
   const ai = useAIStatus();
+  const [settings, setSettings] = useState(false);
   const [duration, setDuration] = useState(12);
   const painter = usePainter();
   // painting: one picture of the whole scene, moved by the video model · layered: separate editable parts
-  const [mode, setMode] = useState<"painting" | "layered">("painting");
+  const [mode, setMode] = useState<"painting" | "layered" | "agent">("painting");
   const [style, setStyle] = useState<Style>("lofi");
   // a picked song idea names the scene, while its prompt is still the one in the box
   const [idea, setIdea] = useState<{ prompt: string; title: string } | null>(null);
@@ -106,9 +109,11 @@ export function Welcome() {
     : `local · about ${Math.max(1, Math.round(loopSeconds * 0.8))} min for a ${loopSeconds} s loop`;
   // a painting only moves through the video model's loop, so it is always on there
   const painted = mode === "painting";
+  // only planned layers have shots the video model can make (agent mode has no plan)
+  const planned = mode === "layered";
   const start = () =>
     canGenerate &&
-    generate({ prompt: prompt.trim(), duration, aspect, mode, style, title: idea?.prompt === prompt ? idea.title : undefined, cinematic: !painted && cinematic && !!shotModel, loop: (painted || natural) && !!shotModel }, true);
+    generate({ prompt: prompt.trim(), duration, aspect, mode, style, title: idea?.prompt === prompt ? idea.title : undefined, cinematic: planned && cinematic && !!shotModel, loop: (painted || (planned && natural)) && !!shotModel }, true);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   useEffect(() => {
@@ -139,7 +144,11 @@ export function Welcome() {
             <Clapperboard size={20} strokeWidth={1.5} className="text-accent" />
             <span className="text-title font-semibold">Anim Studio</span>
           </div>
-          <StatusPill status={ai.status} title={ai.message}>{ai.message}</StatusPill>
+          <div className="flex min-w-0 items-center gap-2">
+            <StatusPill status={ai.status} title={ai.message}>{ai.message}</StatusPill>
+            <IconButton label="Settings" icon={<Settings size={16} strokeWidth={1.5} />} onClick={() => setSettings(true)} />
+          </div>
+          <SettingsDialog open={settings} onOpenChange={setSettings} />
         </header>
 
         <section className="flex flex-col gap-3">
@@ -161,9 +170,9 @@ export function Welcome() {
             className="w-full resize-none rounded-md border border-line bg-panel p-4 text-title outline-none transition-ui placeholder:text-fg-3 focus:border-accent"
           />
           <p id="prompt-note" className="text-sm text-fg-3">{painterReady === false
-              ? "Generating needs the image painter and its segmentation models: run pnpm setup:painter --layered (about 11 GB the first time). You can still start a blank scene or open an example."
+              ? "Generating needs the image painter and its segmentation models: run npm run setup:painter --layered (about 11 GB the first time). You can still start a blank scene or open an example."
               : ai.status === "ok"
-                ? mode === "painting" ? "The AI paints the whole scene, then the video AI moves it in a seamless loop. Ctrl+Enter generates." : "The AI plans the layers, paints each one and sets them moving in a seamless loop (about 3–5 minutes on your GPU). Ctrl+Enter generates."
+                ? mode === "painting" ? "The AI paints the whole scene, then the video AI moves it in a seamless loop. Ctrl+Enter generates." : mode === "agent" ? "The AI paints the whole scene, looks at it, then cuts what should move into editable layers and animates them. Ctrl+Enter generates." : "The AI plans the layers, paints each one and sets them moving in a seamless loop (about 3–5 minutes on your GPU). Ctrl+Enter generates."
                 : ai.fix
                   ? `AI not ready: ${ai.fix}`
                   : "AI not ready. You can still start a blank scene or open an example."}</p>
@@ -171,7 +180,7 @@ export function Welcome() {
 
         <section className="flex flex-col gap-3">
           <h2 className="text-title font-semibold text-fg-2">How it's made</h2>
-          <div role="radiogroup" aria-label="How the scene is made" className="grid grid-cols-2 gap-3">
+          <div role="radiogroup" aria-label="How the scene is made" className="grid grid-cols-3 gap-3">
             {MODES.map((m) => (
               <button
                 key={m.id}
@@ -233,10 +242,10 @@ export function Welcome() {
           <NumberField className="w-72" label="Duration" unit="s" value={duration} min={5} max={30} step={1} slider onChange={(v) => setDuration(Math.round(v))} />
           {painted && (
             <p className="font-mono text-micro text-fg-3">
-              {shotModel ? `Moved by ${shotModel} as a seamless ${loopSeconds} s loop · ${loopNote}` : "No video model is set up, so the painting will stay still: run pnpm setup:painter --video"}
+              {shotModel ? `Moved by ${shotModel} as a seamless ${loopSeconds} s loop · ${loopNote}` : "No video model is set up, so the painting will stay still: run npm run setup:painter --video"}
             </p>
           )}
-          {shotModel && !painted && (
+          {shotModel && planned && (
             <div className="flex items-center gap-2">
               <Toggle pressed={natural} onPressedChange={setNatural} label={`Animate the finished scene with ${shotModel} for natural motion (walking, breathing, hair), looped seamlessly over the editable layers`} icon={<Wind size={16} strokeWidth={1.5} />}>
                 Natural motion (video AI loop)
@@ -244,7 +253,7 @@ export function Welcome() {
               <span className="font-mono text-micro text-fg-3">{loopNote}</span>
             </div>
           )}
-          {shotModel && !painted && (
+          {shotModel && planned && (
             <div className="flex items-center gap-2">
               <Toggle pressed={cinematic} onPressedChange={setCinematic} label={`Also make a cinematic AI video clip from the same plan with ${shotModel}${painter?.cloudVideo ? " (paid cloud service)" : ""}`} icon={<Film size={16} strokeWidth={1.5} />}>
                 Cinematic AI video

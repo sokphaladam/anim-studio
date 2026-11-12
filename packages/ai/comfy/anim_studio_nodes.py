@@ -1,4 +1,4 @@
-# ComfyUI nodes for anim-studio, copied into ComfyUI/custom_nodes by `pnpm setup:painter --video`.
+# ComfyUI nodes for anim-studio, copied into ComfyUI/custom_nodes by `npm run setup:painter --video`.
 import torch
 import comfy.latent_formats
 import comfy.model_management

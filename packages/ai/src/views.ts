@@ -18,7 +18,7 @@ const DRIFT = 60;
 /** Paints the character turned to one side and cuts out its head. Throws (with a fix) when no head can be found or cut. */
 export async function paintView(req: ViewRequest, tools: LayeredTools, signal?: AbortSignal): Promise<ViewResult> {
   const { painter } = tools;
-  if (!painter.removeBackground || !painter.segment) throw new AIError("The image painter can't separate layers", "Install the segmentation models: pnpm setup:painter --layered");
+  if (!painter.removeBackground || !painter.segment) throw new AIError("The image painter can't separate layers", "Install the segmentation models: npm run setup:painter --layered");
   const png = await painter.paint({
     positive: paintPrompt(`solo, ${req.look}, ${WORDS[req.view]}, facing ${req.facing}, upper body, centered, simple background, white background`),
     negative: `${LOOK.negative}, multiple people, front view, looking at viewer, cropped head, frame, border`,

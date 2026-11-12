@@ -4,7 +4,7 @@
 //   cd apps/server && npx tsx ../../scripts/bench-video.mts --models seedance2_5,kling_4,local [--cases night,autumn,owl] [--max-usd 6]
 //
 // Cloud models are paid (the total is quoted and checked against --max-usd before anything starts). "local" is Wan 2.2
-// through ComfyUI (pnpm setup:painter --video), free but several minutes a clip. Results go to docs/benchmarks/.
+// through ComfyUI (npm run setup:painter --video), free but several minutes a clip. Results go to docs/benchmarks/.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

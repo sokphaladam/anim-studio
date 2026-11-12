@@ -1,7 +1,7 @@
 // Installs the local image painter: ComfyUI + the Animagine XL 4.0 checkpoint (~10 GB total). Which ComfyUI depends on the OS:
 //   Windows       the portable NVIDIA build (its own Python + CUDA PyTorch)
 //   macOS / Linux a git checkout of the same release with its own .venv (PyTorch uses Apple's GPU via MPS on macOS, CUDA on Linux)
-// Usage: pnpm setup:painter [--video] [--layered]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
+// Usage: npm run setup:painter [--video] [--layered]. Safe to re-run; interrupted downloads resume. Install folder: COMFY_DIR (default data/comfyui).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
@@ -19,7 +19,7 @@ const win = process.platform === "win32";
 const log = (m) => console.log(`[setup:painter] ${m}`);
 const sh = (cmd, args, opts = {}) => {
   log(`$ ${cmd} ${args.join(" ")}`);
-  if (spawnSync(cmd, args, { stdio: "inherit", ...opts }).status !== 0) throw new Error(`${cmd} ${args[0]} failed; fix the error above and re-run pnpm setup:painter.`);
+  if (spawnSync(cmd, args, { stdio: "inherit", ...opts }).status !== 0) throw new Error(`${cmd} ${args[0]} failed; fix the error above and re-run npm run setup:painter.`);
 };
 
 if (process.env.CI) process.exit(0);
@@ -30,7 +30,7 @@ if (process.platform === "linux" && spawnSync("nvidia-smi", [], { stdio: "ignore
 function download(url, file) {
   log(`downloading ${url.split("/").pop()} …`);
   const r = spawnSync(win ? "curl.exe" : "curl", ["-L", "--fail", "-C", "-", "--retry", "5", "-o", file, url], { stdio: "inherit" });
-  if (r.status !== 0) throw new Error(`Download failed: ${url}. Re-run pnpm setup:painter to resume.`);
+  if (r.status !== 0) throw new Error(`Download failed: ${url}. Re-run npm run setup:painter to resume.`);
 }
 
 /** First Python 3.10–3.13 on PATH (the versions PyTorch and ComfyUI support), or null. */
@@ -67,7 +67,7 @@ if (win) {
   if (!existsSync(done)) {
     if (!existsSync(python)) {
       const base = findPython();
-      if (!base) throw new Error(`ComfyUI needs Python 3.10–3.13. Install it (macOS: brew install python@3.12), then re-run pnpm setup:painter.`);
+      if (!base) throw new Error(`ComfyUI needs Python 3.10–3.13. Install it (macOS: brew install python@3.12), then re-run npm run setup:painter.`);
       sh(base, ["-m", "venv", venv]);
     }
     sh(python, ["-m", "pip", "install", "--upgrade", "pip"]);
@@ -123,13 +123,17 @@ await install(MODEL_URL, join(models, "checkpoints", "animagine-xl-4.0-opt.safet
 if (process.argv.includes("--video")) {
   const WAN = "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/split_files";
   const side = process.env.VIDEO_MODELS_DIR || models;
+  if (!existsSync(join(models, "diffusion_models", "wan2.2_ti2v_5B_fp16.safetensors")) && freeGB < 20)
+    throw new Error(`Only ${freeGB.toFixed(1)} GB free in ${dir}; the video model needs about 20 GB. Free some space or set COMFY_DIR to another drive.`);
   await install(`${WAN}/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors`, join(models, "diffusion_models", "wan2.2_ti2v_5B_fp16.safetensors"));
   await install(`${WAN}/vae/wan2.2_vae.safetensors`, join(side, "vae", "wan2.2_vae.safetensors"));
   await install(`${WAN}/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`, join(side, "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"));
   // 4-step turbo LoRA (~0.33 GB): the video model then makes a clip in minutes instead of ~20 (VIDEO_TURBO=0 turns it off)
   await install("https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/Wan22-Turbo/Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors", join(models, "loras", "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors"));
   // our nodes: a clip that ends on its first frame (seamless loops) and color matching to the painting
-  copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "packages", "ai", "comfy", "anim_studio_nodes.py"), join(comfy, "custom_nodes", "anim_studio_nodes.py"));
+  // (not beside the packaged app's copy of this script: the app copies the nodes in itself whenever it starts ComfyUI)
+  const nodes = join(dirname(fileURLToPath(import.meta.url)), "..", "packages", "ai", "comfy", "anim_studio_nodes.py");
+  if (existsSync(nodes)) copyFileSync(nodes, join(comfy, "custom_nodes", "anim_studio_nodes.py"));
 }
 // --layered: layered animation separates characters into parts. SAM 3.1 (~1.75 GB, SAM License) finds a part from a word
 // ("head"); BiRefNet (~0.45 GB, MIT) cuts a subject from its background. ComfyUI ships the nodes for both.
@@ -139,7 +143,5 @@ if (process.argv.includes("--layered")) {
 }
 const extra = [];
 if (process.env.VIDEO_MODELS_DIR) extra.push(`anim_studio:\n  base_path: ${process.env.VIDEO_MODELS_DIR.replaceAll("\\", "/")}\n  vae: vae\n  text_encoders: text_encoders`);
-// DIFFUSERS_DIR: a folder of diffusers models holding stable-diffusion-xl-base-1.0, which the Flat 2D motion graphics style paints with
-if (process.env.DIFFUSERS_DIR && existsSync(process.env.DIFFUSERS_DIR)) extra.push(`anim_studio_diffusers:\n  diffusers: ${process.env.DIFFUSERS_DIR.replaceAll("\\", "/")}`);
 if (extra.length) writeFileSync(join(comfy, "extra_model_paths.yaml"), `${extra.join("\n")}\n`);
 log(`ready: ${comfy}. The app starts ComfyUI by itself when it paints.`);

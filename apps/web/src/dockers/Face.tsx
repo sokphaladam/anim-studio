@@ -67,7 +67,7 @@ function Character({ id }: { id: string }) {
       if (next) commit(`Paint ${id} ${v.label}`, next);
       if (body.image.review) setNote(`Check the new view: ${body.image.review}`);
     } catch (e) {
-      setNote(e instanceof TypeError ? "The AI server is not running — start it with pnpm dev" : (e as Error).message);
+      setNote(e instanceof TypeError ? "The AI server is not running — start it with npm run dev" : (e as Error).message);
     } finally {
       setBusy(null);
     }

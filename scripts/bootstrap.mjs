@@ -1,5 +1,5 @@
-// One-command setup: `npm run bootstrap` (or `pnpm bootstrap`). Safe to re-run.
-// Installs packages (fetching pnpm via npx when it's missing), creates .env, builds, sets up Ollama and the painter,
+// One-command setup: `npm run bootstrap`. Safe to re-run.
+// Installs packages, creates .env, builds, sets up Ollama and the painter,
 // installs Playwright's Chromium for the e2e/screenshot scripts, then boots the API once to prove it works.
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync } from "node:fs";
@@ -22,12 +22,8 @@ if (major < 20) {
   process.exit(1);
 }
 
-const hasPnpm = spawnSync("pnpm", ["--version"], { stdio: "ignore", shell: win }).status === 0;
-const [pnpm, pre] = hasPnpm ? ["pnpm", []] : ["npx", ["-y", "pnpm@9.15.9"]];
-const p = (...args) => [pnpm, [...pre, ...args]];
-
 log("installing packages");
-must(...p("install"));
+must("npm", ["install"]);
 
 if (!existsSync(`${root}.env`)) {
   copyFileSync(`${root}.env.example`, `${root}.env`);
@@ -35,10 +31,10 @@ if (!existsSync(`${root}.env`)) {
 }
 
 log("building");
-must(...p("build"));
+must("npm", ["run", "build"]);
 
-log("setting up Ollama + model");
-must("node", ["scripts/setup-ai.mjs"]);
+log("setting up Ollama");
+must("node", ["scripts/setup-ai.mjs", "--no-pull"]); // the server then downloads the model that fits this computer
 
 log("setting up the image painter (ComfyUI: portable NVIDIA build on Windows, git + venv on macOS/Linux)");
 must("node", ["scripts/setup-painter.mjs", "--layered"]);
@@ -49,7 +45,7 @@ if (!ok("npx", ["playwright", "install", "chromium"])) log("Chromium download fa
 
 log("smoke test: starting the API server");
 const port = "8799";
-const server = spawn(pnpm, [...pre, "--filter", "@anim/server", "start"], { cwd: root, env: { ...process.env, API_PORT: port }, stdio: "ignore", shell: win, detached: !win });
+const server = spawn("npm", ["run", "start", "-w", "@anim/server"], { cwd: root, env: { ...process.env, API_PORT: port }, stdio: "ignore", shell: win, detached: !win });
 let healthy = false;
 for (let i = 0; i < 60 && !healthy; i++) {
   await new Promise((r) => setTimeout(r, 500));
@@ -58,8 +54,8 @@ for (let i = 0; i < 60 && !healthy; i++) {
 if (win) spawnSync("taskkill", ["/pid", String(server.pid), "/t", "/f"], { stdio: "ignore" });
 else process.kill(-server.pid);
 if (!healthy) {
-  console.error(`[bootstrap] API server did not answer on :${port}. Run \`${hasPnpm ? "pnpm" : "npx pnpm"} --filter @anim/server start\` to see why.`);
+  console.error(`[bootstrap] API server did not answer on :${port}. Run \`npm run start -w @anim/server\` to see why.`);
   process.exit(1);
 }
 
-log(`all set. Start the app with \`${hasPnpm ? "pnpm" : "npx pnpm"} dev\` → http://localhost:5173`);
+log(`all set. Start the app with \`npm run dev\` → http://localhost:5173`);

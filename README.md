@@ -6,11 +6,11 @@ A local, Krita-style 2D animation studio in the browser. The AI plans a layered 
 
 ## Setup
 
-**One command:** install Node 20+, run `npm run bootstrap` (or `pnpm bootstrap`), then `pnpm dev`. It fetches pnpm if missing, installs packages, creates `.env` from `.env.example`, builds everything, installs Ollama and pulls the model, installs the ComfyUI image painter (~14 GB, see below), installs Playwright's Chromium, and boots the API once to check it works. It's safe to re-run. The steps below are what it does, if you'd rather do them by hand.
+**One command:** install Node 20+, run `npm run bootstrap`, then `npm run dev`. It installs packages, creates `.env` from `.env.example`, builds everything, installs Ollama and pulls the model, installs the ComfyUI image painter (~14 GB, see below), installs Playwright's Chromium, and boots the API once to check it works. It's safe to re-run. The steps below are what it does, if you'd rather do them by hand.
 
-1. Node 20+ (`nvm use 22`) and pnpm 9 (`npm i -g pnpm@9`).
-2. `pnpm install`. On Windows, `better-sqlite3` may compile from source (a few minutes; needs the Visual Studio C++ build tools if there is no prebuilt binary for your Node version).
-3. Ollama (needed from Milestone 3) is set up automatically: `pnpm dev` installs it if missing (winget on Windows, Homebrew on macOS, the official script on Linux) and starts it, and the server then downloads `OLLAMA_MODEL` in the background (progress shows in the AI status pill). Run `pnpm setup:ai` to do it all up front, including the model download in the terminal. Set `OLLAMA_AUTO_SETUP=0` to manage Ollama yourself (install from ollama.com, then `ollama pull qwen2.5-coder:14b`).
+1. Node 20+ (`nvm use 22`).
+2. `npm install`. On Windows, `better-sqlite3` may compile from source (a few minutes; needs the Visual Studio C++ build tools if there is no prebuilt binary for your Node version).
+3. Ollama (needed from Milestone 3) is set up automatically: `npm run dev` installs it if missing (winget on Windows, Homebrew on macOS, the official script on Linux) and starts it, and the server then downloads `OLLAMA_MODEL` in the background (progress shows in the AI status pill). Run `npm run setup:ai` to do it all up front, including the model download in the terminal. Set `OLLAMA_AUTO_SETUP=0` to manage Ollama yourself (install from ollama.com, then `ollama pull qwen2.5-coder:14b`).
 4. Copy `.env.example` to `.env` if you need to change the Ollama URL/model (Milestone 3+).
 
 ## Windows app
@@ -19,26 +19,26 @@ Anim Studio runs as a desktop app (Electron, `apps/desktop`):
 
 | Command | What it does |
 | --- | --- |
-| `pnpm desktop` | Development: the API server, the Vite dev server and an app window onto it (Alt shows a Dev menu with reload and devtools) |
-| `pnpm desktop:build` | Builds the installer `apps/desktop/release/Anim Studio Setup <version>.exe` (about 130 MB) |
+| `npm run desktop` | Development: the API server, the Vite dev server and an app window onto it (Alt shows a Dev menu with reload and devtools) |
+| `npm run desktop:build` | Builds the installer `apps/desktop/release/Anim Studio Setup <version>.exe` (about 130 MB) |
 
-The installed app starts its own server on `127.0.0.1:8791` (any free port if taken) serving the API and the built web app, keeps projects in `%APPDATA%\Anim Studionim-studio.db`, reads optional settings from `%APPDATA%\Anim Studio\.env` (same variables as `.env.example`), and installs/starts Ollama in the background like `pnpm dev`. The installer is unsigned, so Windows SmartScreen asks for confirmation the first time. If `pnpm install` skipped Electron's download, run `node apps/desktop/node_modules/electron/install.js`.
+The installed app starts its own server on `127.0.0.1:8791` (any free port if taken) serving the API and the built web app, keeps projects in `%APPDATA%\Anim Studionim-studio.db`, reads optional settings from `%APPDATA%\Anim Studio\.env` (same variables as `.env.example`), and installs/starts Ollama in the background like `npm run dev`. The installer is unsigned, so Windows SmartScreen asks for confirmation the first time. If `npm install` skipped Electron's download, run `node apps/desktop/node_modules/electron/install.js`.
 
 ## Run
 
 | Command | What it does |
 | --- | --- |
-| `pnpm setup:ai` | Installs and starts Ollama if needed, then pulls `OLLAMA_MODEL` |
-| `pnpm dev` | Web app at http://localhost:5173 and the API server on port 8790 (`API_PORT`) |
-| `pnpm storybook` | Component gallery at http://localhost:6006 |
-| `pnpm test` | Schema, track, reference and determinism tests |
-| `pnpm typecheck` / `pnpm lint` | TypeScript strict check / ESLint (blocks hex colors outside `tokens.css`) |
-| `pnpm compare` | With `pnpm dev` running: renders `reference/autumn-window.html` and the engine at the same times and reports pixel differences |
-| `pnpm e2e:flipbook` | With `pnpm dev` running: draws a 12-frame flipbook in the real app, checks onion skin, 12 fps playback and undo/redo |
-| `pnpm generate:layered ["prompt"] [seconds]` | Generates a scene for real (model + ComfyUI) without the app; writes the scene, every part/mask/source image, check frames and `preview.mp4` (the loop played twice) to `data/layered/<time>/` |
-| `pnpm e2e:layered` | No GPU or `pnpm dev` needed: starts its own API (canned plan + a fake painter) and Vite, then checks layered mode, stage progress, the Layers docker (select, hide, reorder, transform, pivot), look_at keyframes, scrub phases, deterministic frames, save/reopen and MP4 export |
-| `pnpm e2e:lofi` | No GPU or `pnpm dev` needed: draws a 6-second lofi loop by hand in the real editor (night fill, a dozing girl, eyes that close and open frame by frame, a 24-drawing steam flipbook, twinkling stars), checks playback and scrubbing, and exports it to `screenshots/lofi/lofi.mp4` |
-| `pnpm screenshots` | With `pnpm dev` running: screenshots every screen at 1366×768, 1366×768 at 125% scaling, 1920×1080, 1920×1080 at 150% and 2560×1440 into `screenshots/` |
+| `npm run setup:ai` | Installs and starts Ollama if needed, then pulls `OLLAMA_MODEL` |
+| `npm run dev` | Web app at http://localhost:5173 and the API server on port 8790 (`API_PORT`) |
+| `npm run storybook` | Component gallery at http://localhost:6006 |
+| `npm test` | Schema, track, reference and determinism tests |
+| `npm run typecheck` / `npm run lint` | TypeScript strict check / ESLint (blocks hex colors outside `tokens.css`) |
+| `npm run compare` | With `npm run dev` running: renders `reference/autumn-window.html` and the engine at the same times and reports pixel differences |
+| `npm run e2e:flipbook` | With `npm run dev` running: draws a 12-frame flipbook in the real app, checks onion skin, 12 fps playback and undo/redo |
+| `npm run generate:layered ["prompt"] [seconds]` | Generates a scene for real (model + ComfyUI) without the app; writes the scene, every part/mask/source image, check frames and `preview.mp4` (the loop played twice) to `data/layered/<time>/` |
+| `npm run e2e:layered` | No GPU or `npm run dev` needed: starts its own API (canned plan + a fake painter) and Vite, then checks layered mode, stage progress, the Layers docker (select, hide, reorder, transform, pivot), look_at keyframes, scrub phases, deterministic frames, save/reopen and MP4 export |
+| `npm run e2e:lofi` | No GPU or `npm run dev` needed: draws a 6-second lofi loop by hand in the real editor (night fill, a dozing girl, eyes that close and open frame by frame, a 24-drawing steam flipbook, twinkling stars), checks playback and scrubbing, and exports it to `screenshots/lofi/lofi.mp4` |
+| `npm run screenshots` | With `npm run dev` running: screenshots every screen at 1366×768, 1366×768 at 125% scaling, 1920×1080, 1920×1080 at 150% and 2560×1440 into `screenshots/` |
 
 The two browser scripts use Playwright's Chromium if installed (`npx playwright install chromium`), otherwise a local Chrome/Brave/Edge, or set `CHROME_PATH`.
 
@@ -69,7 +69,7 @@ A scene of another shape is letterboxed with black bars, never stretched. Progre
 
 Every AI scene is a layered lofi loop: one calm painted scene where a few things move gently and the video repeats seamlessly. There is one built-in look (soft lofi anime illustration, `LOOK` in `packages/ai/src/generate.ts`); the art-tradition picker and the Vector / Painted / Video generation modes are gone. Older scenes made with them still open, play and edit (their `meta.style` is kept but ignored), and **AI › Make the painting move / Turn the painting into video** still work on old painted scenes.
 
-`.env` picks the language model (copy `.env.example`): local Ollama (`OLLAMA_MODEL=qwen2.5-coder:14b` on the RTX 3060 PC) or an OpenAI-compatible cloud model (`AI_PROVIDER=openai-compatible`). With `AI_FALLBACK=1` and the `FALLBACK_*` settings filled in, Ollama stays first and the cloud model answers only while Ollama isn't running or the model is missing; the AI status pill says "Cloud AI standing in" then. It is off by default, so prompts never leave the PC unless you turn it on. The image side needs `pnpm setup:painter --layered`: ComfyUI v0.43 (Windows: the portable NVIDIA build; macOS and Linux: a git checkout in `data/comfyui/ComfyUI` with its own `.venv`, needs Python 3.10–3.13, uses Apple's GPU via PyTorch MPS on Apple Silicon or CUDA on Linux; Apple Silicon with 16 GB+ memory recommended, Intel Macs and GPU-less Linux paint on the CPU, very slowly) with the with the Animagine XL 4.0 checkpoint (~9 GB) plus the two segmentation models ComfyUI v0.43 has nodes for (~2.2 GB): SAM 3.1 (`sam3.1_multiplex_fp16`, SAM License) finds a part from a few words ("head", "arm holding the mug"), BiRefNet (MIT) cuts a subject from its background. Generating is disabled on the welcome screen until they are installed. The server starts ComfyUI when needed and unloads the language model first, since a 12 GB GPU can't hold both.
+`.env` picks the language model (copy `.env.example`): local Ollama (`OLLAMA_MODEL=qwen2.5-coder:14b` on the RTX 3060 PC) or an OpenAI-compatible cloud model (`AI_PROVIDER=openai-compatible`). With `AI_FALLBACK=1` and the `FALLBACK_*` settings filled in, Ollama stays first and the cloud model answers only while Ollama isn't running or the model is missing; the AI status pill says "Cloud AI standing in" then. It is off by default, so prompts never leave the PC unless you turn it on. The image side needs `npm run setup:painter --layered`: ComfyUI v0.43 (Windows: the portable NVIDIA build; macOS and Linux: a git checkout in `data/comfyui/ComfyUI` with its own `.venv`, needs Python 3.10–3.13, uses Apple's GPU via PyTorch MPS on Apple Silicon or CUDA on Linux; Apple Silicon with 16 GB+ memory recommended, Intel Macs and GPU-less Linux paint on the CPU, very slowly) with the with the Animagine XL 4.0 checkpoint (~9 GB) plus the two segmentation models ComfyUI v0.43 has nodes for (~2.2 GB): SAM 3.1 (`sam3.1_multiplex_fp16`, SAM License) finds a part from a few words ("head", "arm holding the mug"), BiRefNet (MIT) cuts a subject from its background. Generating is disabled on the welcome screen until they are installed. The server starts ComfyUI when needed and unloads the language model first, since a 12 GB GPU can't hold both.
 
 Pipeline (`packages/ai/src/layered.ts`, prompt `prompts/layered.md`), one GPU model at a time, cancellable between stages:
 1. **plan**: the language model returns a layer plan: the empty setting, 1–3 characters (look, pose, place, idle loops, up to 2 moving parts), props that need their own layer, ambient effects and timed actions. It is validated with Zod and sent back with its problems up to twice.
@@ -118,7 +118,7 @@ Cut-out layers can only slide, turn and scale, so a walking cat or a person shif
 
 Tick **Cinematic AI video** on the welcome screen to also get video shots made from the same plan as the editable scene. The editable scene is always made first and stays the source of truth; shots are stored beside it (`spec.cinematic`), never as layers, so a failed or expensive shot can't break the scene. Each shot's first frame is the editable scene rendered at the shot's start (a fade-in is left out, so the clip doesn't start from black). The planner may pick up to two 4–10 s moments; with none, one shot covers the scene's first 10 s.
 
-The video model is the local one (`pnpm setup:painter --video`, Wan 2.2) or, opt-in, Runway: set `CLOUD_VIDEO_ENABLED=1` and `RUNWAY_API_KEY` in `.env` (the key stays in the server: never in the browser, projects, logs or job events). `RUNWAY_VIDEO_MODEL` is `seedance2_5` (default) or `kling_4`; clips are 720p and silent.
+The video model is the local one (`npm run setup:painter --video`, Wan 2.2) or, opt-in, Runway: set `CLOUD_VIDEO_ENABLED=1` and `RUNWAY_API_KEY` in `.env` (the key stays in the server: never in the browser, projects, logs or job events). `RUNWAY_VIDEO_MODEL` is `seedance2_5` (default) or `kling_4`; clips are 720p and silent.
 
 **Cost.** Runway charges per second of video (seedance2_5 720p: 30 credits = $0.30 a second, 80-credit minimum; a real 4 s clip cost $1.20). The welcome screen quotes the price of a shot before you generate, from the list prices in `packages/ai/src/video.ts`. `RUNWAY_MAX_COST_USD` (default $5) caps a whole job, every shot and retry included: a shot whose quote is over what's left is refused before any task is made, and one whose Runway estimate is over (prices changed) is cancelled before it runs. Every started task counts against the limit, even if it fails.
 

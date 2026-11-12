@@ -1,4 +1,4 @@
-import { AIError, ASPECT_SIZE, count, maskFrom, personChecks, cinematicShots, clipChecks, loopSeconds, loopShot, PAINT_SIZE, paintingPrompts, generateLayered, paintView, sceneChecks, videoPrompt, worst, VIDEO_SIZE, type AnimateFn, type ClipStats, type Footage, type LayeredEvent, type LayeredPlan, type LayeredTools, type Progress, type Provider, type StyleId } from "@anim/ai";
+import { AIError, ASPECT_SIZE, count, maskFrom, personChecks, cinematicShots, clipChecks, loopSeconds, loopShot, PAINT_SIZE, paintingPrompts, generateLayered, generateAgent, paintView, sceneChecks, videoPrompt, worst, VIDEO_SIZE, type AnimateFn, type ClipStats, type Footage, type LayeredEvent, type LayeredPlan, type LayeredTools, type Progress, type Provider, type StyleId } from "@anim/ai";
 
 /** "Generating: step 2 of 4 · 45 s" and the fraction done, for a status event. */
 const progressStatus = (p: Progress, t0: number) => ({ message: `${p.label}${p.steps ? `: step ${p.step} of ${p.steps}` : ""} · ${Math.round((Date.now() - t0) / 1000)} s`, progress: p.steps ? p.step! / p.steps : undefined });
@@ -18,7 +18,8 @@ const Body = z.object({ prompt: z.string().trim().min(3, "Describe the animation
   loop: z.boolean().default(false),
   // layered: separate editable parts · painting: one painting of the whole scene, moved by the video model (things stay
   // where the painter put them: a hand on the desk, a cup on the table)
-  mode: z.enum(["layered", "painting"]).default("layered"),
+  // agent: paints the whole scene first, then looks at it and cuts out and rigs what should move
+  mode: z.enum(["layered", "painting", "agent"]).default("layered"),
   /** The scene's name (a song idea's title); else the prompt's start. */
   title: z.string().trim().max(80).optional(),
 });
@@ -53,9 +54,10 @@ export function generateRoutes(
     if (r.data.mode === "painting") return { jobId: startJob((emit, signal) => paintScene(r.data, emit, signal)) };
     const p = provider();
     const jobId = startJob(async (emit, signal) => {
-      if (!layered || !(await layered.ready())) throw new AIError("Generating needs the image painter and its segmentation models", "Run pnpm setup:painter --layered (about 11 GB the first time).");
+      if (!layered || !(await layered.ready())) throw new AIError("Generating needs the image painter and its segmentation models", "Run npm run setup:painter --layered (about 11 GB the first time).");
       let plan: LayeredPlan | null = null;
-      const spec = await generateLayered(r.data, p, layered.tools, (e: LayeredEvent) => (e.type === "plan" && (plan = e.plan), emit(e as JobEvent)), signal);
+      // shortcut: the agent makes no LayeredPlan, so it makes no cinematic shots; give it one if they're wanted
+      const spec = r.data.mode === "agent" ? await generateAgent(r.data, p, layered.tools, emit, signal) : await generateLayered(r.data, p, layered.tools, (e: LayeredEvent) => (e.type === "plan" && (plan = e.plan), emit(e as JobEvent)), signal);
       // the quality report: what failed or needs a person's look (flagged parts, pivots, mesh weights)
       emit({ type: "quality", items: sceneChecks(spec) });
       // the editable scene is done (and saved by the editor) before any video: a failed shot never costs the scene
@@ -70,7 +72,7 @@ export function generateRoutes(
    */
   async function paintScene(req: z.infer<typeof Body>, emit: (e: JobEvent) => void, signal: AbortSignal) {
     const painter = layered?.tools.painter;
-    if (!painter) throw new AIError("Painting needs the image painter", "Run pnpm setup:painter.");
+    if (!painter) throw new AIError("Painting needs the image painter", "Run npm run setup:painter.");
     const { paint, video, person } = paintingPrompts(req.prompt, req.style);
     const [pw, ph] = PAINT_SIZE[req.aspect];
     const [width, height] = ASPECT_SIZE[req.aspect];
@@ -126,7 +128,7 @@ export function generateRoutes(
    */
   async function runShots(spec: SceneSpec, shots: { id: string; start: number; end: number; prompt: string }[], emit: (e: JobEvent) => void, signal: AbortSignal) {
     const maker = shotMaker();
-    if (!maker || !media) return emit({ type: "warning", message: "No video model is set up, so no cinematic video was made", fix: "Set CLOUD_VIDEO_ENABLED=1 and RUNWAY_API_KEY in .env, or run pnpm setup:painter --video" });
+    if (!maker || !media) return emit({ type: "warning", message: "No video model is set up, so no cinematic video was made", fix: "Set CLOUD_VIDEO_ENABLED=1 and RUNWAY_API_KEY in .env, or run npm run setup:painter --video" });
     const aspect = spec.meta.width === spec.meta.height ? "1:1" : spec.meta.width > spec.meta.height ? "16:9" : "9:16";
     const [width, height] = VIDEO_SIZE[aspect];
     let left = media.budgetUsd;
@@ -179,7 +181,7 @@ export function generateRoutes(
     if (!b.success || !spec?.success) return reply.code(400).send({ error: "Send the scene (spec) and optionally the shot ids to redo" });
     const shots = (spec.data.cinematic ?? []).filter((s) => (b.data.ids ? b.data.ids.includes(s.id) : s.status !== "ready"));
     if (!shots.length) return reply.code(422).send({ error: "No cinematic shots to redo" });
-    if (!shotMaker() || !media) return reply.code(422).send({ error: "No video model is set up", fix: "Set CLOUD_VIDEO_ENABLED=1 and RUNWAY_API_KEY in .env, or run pnpm setup:painter --video" });
+    if (!shotMaker() || !media) return reply.code(422).send({ error: "No video model is set up", fix: "Set CLOUD_VIDEO_ENABLED=1 and RUNWAY_API_KEY in .env, or run npm run setup:painter --video" });
     const jobId = startJob((emit, signal) => runShots(spec.data, shots.map((s) => ({ id: s.id, start: s.start, end: s.end, prompt: s.prompt })), emit, signal));
     return { jobId };
   });
@@ -194,7 +196,7 @@ export function generateRoutes(
     const useCloud = r.data.provider === "cloud" || (!r.data.provider && !!cloud);
     if (useCloud && !cloud) return reply.code(422).send({ error: "Cloud video isn't set up", fix: "Set CLOUD_VIDEO_ENABLED=1 and RUNWAY_API_KEY in .env" });
     const run: AnimateFn | undefined = useCloud ? async (a, s) => (await cloud!.animate(a, s)).footage : animate;
-    if (!run || !readImage) return reply.code(422).send({ error: "The video model isn't set up", fix: "Run pnpm setup:painter --video" });
+    if (!run || !readImage) return reply.code(422).send({ error: "The video model isn't set up", fix: "Run npm run setup:painter --video" });
     const png = readImage(r.data.src);
     if (!png) return reply.code(404).send({ error: "Image not found" });
     const jobId = startJob(async (emit, signal) => {
@@ -222,7 +224,7 @@ export function generateRoutes(
   app.post("/api/characters/view", async (req, reply) => {
     const b = View.safeParse(req.body);
     if (!b.success) return reply.code(400).send({ error: b.error.issues[0].message });
-    if (!layered || !(await layered.ready())) return reply.code(422).send({ error: "Generating needs the image painter and its segmentation models", fix: "Run pnpm setup:painter --layered" });
+    if (!layered || !(await layered.ready())) return reply.code(422).send({ error: "Generating needs the image painter and its segmentation models", fix: "Run npm run setup:painter --layered" });
     const front = readImage?.(b.data.front);
     if (!front) return reply.code(404).send({ error: "The front head image is missing" });
     const ac = new AbortController();

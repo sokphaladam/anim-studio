@@ -18,7 +18,7 @@ export function useAIStatus(): AIStatus {
         })
         .catch(() => {
           if (!alive) return;
-          setS({ status: "error", message: "The AI server is not running — start it with pnpm dev" });
+          setS({ status: "error", message: "The AI server is not running — start it with npm run dev" });
           id = setTimeout(check, 20_000);
         });
     check();

@@ -97,7 +97,7 @@ Use the current versions and conventions already in the repository. Do not add a
 | Layer | Technology | Purpose |
 | --- | --- | --- |
 | Language | TypeScript, strict mode; Node.js 20+ | Shared language across engine, server and UI |
-| Monorepo | pnpm workspaces | Shared spec, engine, AI and UI packages |
+| Monorepo | npm workspaces | Shared spec, engine, AI and UI packages |
 | Frontend | React + Vite | Workspace, dockers and player |
 | Desktop | Electron | Desktop application wrapper |
 | Backend | Fastify | REST API and generation-job progress events |

@@ -13,7 +13,7 @@ const out = resolve(process.argv[2] ?? "screenshots/lofi");
 mkdirSync(out, { recursive: true });
 
 const procs = [];
-const start = (args, cwd) => procs.push(spawn("pnpm", args, { cwd, env: { ...process.env, API_PORT }, stdio: "ignore", shell: true }));
+const start = (args, cwd) => procs.push(spawn("npm", args, { cwd, env: { ...process.env, API_PORT }, stdio: "ignore", shell: true }));
 const stop = () => procs.forEach((p) => (process.platform === "win32" ? spawnSync("taskkill", ["/pid", String(p.pid), "/T", "/F"]) : p.kill()));
 async function up(url) {
   for (let i = 0; i < 120; i++) {
@@ -32,8 +32,8 @@ const check = (ok, what) => {
 const NIGHT = "#121018", TAN = "#c99a66", CREAM = "#ead8b8", INK = "#0b0a0f";
 const FPS = 12, SECONDS = 6;
 
-start(["exec", "tsx", "test/fake-layered-server.ts"], resolve(root, "apps/server"));
-start(["exec", "vite", "--port", WEB_PORT, "--strictPort"], resolve(root, "apps/web"));
+start(["exec", "--", "tsx", "test/fake-layered-server.ts"], resolve(root, "apps/server"));
+start(["exec", "--", "vite", "--port", WEB_PORT, "--strictPort"], resolve(root, "apps/web"));
 let browser;
 try {
   browser = await launch();

@@ -23,6 +23,10 @@ const STYLES: { id: Style; label: string; hint: string }[] = [
   { id: "lofi", label: "Cozy lofi", hint: "Warm lamp light, clean outlines, flat colors: the classic lofi study room." },
   { id: "cinematic", label: "Cinematic anime", hint: "Film-like light: glowing skies, light rays, rich detailed backgrounds." },
   { id: "retro", label: "Retro 90s anime", hint: "Hand-painted cels, muted colors and soft film grain, like a 90s anime." },
+  { id: "anime", label: "Anime", hint: "Clean modern anime illustration, no special look." },
+  { id: "ghibli", label: "Ghibli-like, hand-painted", hint: "Watercolor-painted backgrounds, lush nature, big cumulus clouds, warm natural light." },
+  { id: "citypop", label: "City pop (80s poster)", hint: "Airbrushed 80s poster art: neon pastels, palm trees, sunsets." },
+  { id: "storybook", label: "Storybook watercolor", hint: "Soft picture-book painting: gouache and watercolor, gentle shapes, paper texture." },
 ];
 
 type PainterHealth = { installed: boolean; video: boolean; layered: boolean; cloudVideo?: string | null; cloudQuote?: { budgetUsd: number; retries: number; usdBySeconds: Record<string, number | null> } | null };
@@ -199,7 +203,7 @@ export function Welcome() {
 
         <section className="flex flex-col gap-3">
           <h2 className="text-title font-semibold text-fg-2">Style</h2>
-          <div role="radiogroup" aria-label="Visual style" className="grid grid-cols-3 gap-3">
+          <div role="radiogroup" aria-label="Visual style" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {STYLES.map((st) => (
               <button
                 key={st.id}
@@ -207,8 +211,10 @@ export function Welcome() {
                 role="radio"
                 aria-checked={style === st.id}
                 onClick={() => setStyle(st.id)}
-                className={cx("flex flex-col gap-1 rounded-md border p-3 text-left transition-ui", style === st.id ? "border-accent bg-accent-soft" : "border-line bg-panel hover:bg-hover")}
+                className={cx("flex flex-col gap-1 rounded-md border p-2 text-left transition-ui", style === st.id ? "border-accent bg-accent-soft" : "border-line bg-panel hover:bg-hover")}
               >
+                {/* painted by npm run samples:styles: the same scene and seed in each style */}
+                <img src={`/styles/${st.id}.webp`} alt="" loading="lazy" className="aspect-video w-full rounded-sm object-cover" />
                 <span className="text-base font-semibold">{st.label}</span>
                 <span className="text-sm text-fg-3">{st.hint}</span>
               </button>

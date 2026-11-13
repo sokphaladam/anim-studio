@@ -45,7 +45,7 @@ function marksFor(spec: SceneSpec): Record<string, unknown> {
  * timeline first; the finished scene replaces the current one as an undoable step.
  */
 /** The visual directions the server paints in (packages/ai STYLES). */
-export type Style = "lofi" | "cinematic" | "retro";
+export type Style = "lofi" | "cinematic" | "retro" | "anime" | "ghibli" | "citypop" | "storybook";
 
 export async function generate(req: { prompt: string; duration: number; aspect: Aspect; cinematic?: boolean; loop?: boolean; mode?: "layered" | "painting" | "agent"; style?: Style; title?: string }, fromWelcome: boolean) {
   const s = useStudio.getState();

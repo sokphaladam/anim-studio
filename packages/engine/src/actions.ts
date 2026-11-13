@@ -1,5 +1,6 @@
 import { type Action, type Layer, type SceneSpec, type Track } from "@anim/spec";
 import { layerPivot, objectBounds, type Box } from "./bounds";
+import { drawingBox } from "./drawing";
 import { defaultFactory, layerMatrix } from "./index";
 import { apply, invert, type Mat } from "./matrix";
 import { resolve } from "./resolve";
@@ -25,6 +26,7 @@ function boxOf(spec: SceneSpec, l: Layer, t: number, make: CanvasFactory): Box |
     const x = (p.x as number | undefined) ?? 0, y = (p.y as number | undefined) ?? 0;
     return [x, y, x + (p.w as number), y + (p.h as number)];
   }
+  if (l.type === "drawing") return drawingBox(l);
   if (l.type === "group") {
     // a group draws nothing itself: it covers its parts
     const boxes = spec.layers.filter((x) => x.parent === l.id).map((x) => boxOf(spec, x, t, make)).filter((b) => !!b);
@@ -102,26 +104,42 @@ function holdKeys(spec: SceneSpec, a: Action, turned: number): Keys {
  */
 /** Seconds per step of a walk, and how high each step lifts the walker (scene px, times the action's amount). */
 const STEP = 0.32, LIFT = 3;
+/** A jump covers ground faster than walking: its length counts this much toward the path's timing. */
+const JUMP_PACE = 0.5;
 
 function pathKeys(a: Action, duration: number): { x: Keys; y: Keys; flip: Keys } {
   const pts = a.points!;
   const route = [...pts, ...pts.slice(0, -1).reverse()];
-  const lens = route.slice(1).map((p, i) => Math.hypot(p[0] - route[i][0], p[1] - route[i][1]));
+  // a leg that climbs or drops more than it goes sideways (onto a sill, down to the floor) is a jump: one quick arc
+  const jumps = route.slice(1).map((p, i) => Math.abs(p[1] - route[i][1]) > Math.max(20, Math.abs(p[0] - route[i][0])));
+  const lens = route.slice(1).map((p, i) => Math.hypot(p[0] - route[i][0], p[1] - route[i][1]) * (jumps[i] ? JUMP_PACE : 1));
   const total = lens.reduce((s, l) => s + l, 0) || 1;
-  const start = a.start, span = (a.end ?? duration) - start;
+  const start = a.start, whole = (a.end ?? duration) - start;
+  // the pause at the far point comes out of the travel time (at most most of it, so it still moves)
+  const rest = Math.min(a.rest ?? 0, whole * 0.8), span = whole - rest;
   let at = start;
   const x: Keys = [], y: Keys = [], flip: Keys = [];
   route.forEach((p, i) => {
     if (i) {
-      // a walk, not a glide: an even pace with a short ease at each end, and a small lift on every step
       const t0 = at, t1 = at + (lens[i - 1] / total) * span, q = route[i - 1];
-      const steps = Math.max(1, Math.round((t1 - t0) / STEP));
-      for (let s = 1; s < steps * 2; s++) {
-        const u = s / (steps * 2), e = Math.min(1, u / 0.12, (1 - u) / 0.12);
-        const pace = u < 0.12 ? (u * u) / 0.24 : u > 0.88 ? 1 - ((1 - u) * (1 - u)) / 0.24 : (u - 0.06) / 0.88;
-        const t = +(t0 + u * (t1 - t0)).toFixed(4);
-        x.push([t, +(q[0] + (p[0] - q[0]) * pace - pts[0][0]).toFixed(2)]);
-        y.push([t, +(q[1] + (p[1] - q[1]) * pace - pts[0][1] - (s % 2 ? LIFT * a.amount * e : 0)).toFixed(2)]);
+      if (jumps[i - 1]) {
+        // up and over the edge, then down onto it: the arc peaks above the higher end
+        const hop = (Math.abs(p[1] - q[1]) * 0.5 + 20) * a.amount;
+        for (const u of [0.25, 0.5, 0.75]) {
+          const t = +(t0 + u * (t1 - t0)).toFixed(4);
+          x.push([t, +(q[0] + (p[0] - q[0]) * u - pts[0][0]).toFixed(2)]);
+          y.push([t, +(q[1] + (p[1] - q[1]) * u - pts[0][1] - hop * 4 * u * (1 - u)).toFixed(2)]);
+        }
+      } else {
+        // a walk, not a glide: an even pace with a short ease at each end, and a small lift on every step
+        const steps = Math.max(1, Math.round((t1 - t0) / STEP));
+        for (let s = 1; s < steps * 2; s++) {
+          const u = s / (steps * 2), e = Math.min(1, u / 0.12, (1 - u) / 0.12);
+          const pace = u < 0.12 ? (u * u) / 0.24 : u > 0.88 ? 1 - ((1 - u) * (1 - u)) / 0.24 : (u - 0.06) / 0.88;
+          const t = +(t0 + u * (t1 - t0)).toFixed(4);
+          x.push([t, +(q[0] + (p[0] - q[0]) * pace - pts[0][0]).toFixed(2)]);
+          y.push([t, +(q[1] + (p[1] - q[1]) * pace - pts[0][1] - (s % 2 ? LIFT * a.amount * e : 0)).toFixed(2)]);
+        }
       }
       at = t1;
     }
@@ -132,7 +150,15 @@ function pathKeys(a: Action, duration: number): { x: Keys; y: Keys; flip: Keys }
     // unchanged going straight up or down, as painted once back at rest
     const next = route[i + 1];
     const prev = flip.length ? flip[flip.length - 1][1] : 0;
-    flip.push([t, !next ? 0 : next[0] < p[0] ? 1 : next[0] > p[0] ? 0 : prev]);
+    const face = !next ? 0 : next[0] < p[0] ? 1 : next[0] > p[0] ? 0 : prev;
+    if (i === pts.length - 1 && rest > 0) {
+      // stays at the far point, still facing the way it came, then turns for the way back
+      at += rest;
+      const t2 = +at.toFixed(4);
+      x.push([t2, p[0] - pts[0][0]]);
+      y.push([t2, p[1] - pts[0][1]]);
+      flip.push([t, prev], [t2, face]);
+    } else flip.push([t, face]);
   });
   if (start > 0) {
     x.unshift([0, 0]);
@@ -166,6 +192,15 @@ export function actionTracks(spec: SceneSpec, a: Action, make: CanvasFactory = d
       return { rotation: loop(a.period ?? 5, (p) => [[0, 0], [p / 4, 0.03 * k], [(3 * p) / 4, -0.03 * k], [p, 0]]) };
     case "drift":
       return { x: loop(a.period ?? D, (p) => [[0, 0], [p / 2, 40 * k], [p, 0]]) };
+    case "spin":
+      // a whole turn per cycle, at an even speed: tape reels, a record, a fan (amount = turns per cycle; negative turns back)
+      return { rotation: loop(a.period ?? 3, (p) => [[0, 0], [p, 2 * Math.PI * k]], "linear") };
+    case "glow":
+      // dims and comes back slowly: a radio dial, a screen, a lamp breathing light
+      return { opacity: loop(a.period ?? 3, (p) => [[0, 0], [p / 2, -0.35 * k], [p, 0]]) };
+    case "flicker":
+      // quick uneven dips: a candle flame, a fire, a faulty bulb
+      return { opacity: loop(a.period ?? 1.3, (p) => [[0, 0], [0.15 * p, -0.25 * k], [0.3 * p, -0.05 * k], [0.5 * p, -0.3 * k], [0.7 * p, 0], [0.85 * p, -0.15 * k], [p, 0]], "linear") };
     case "blink":
       // eyes shut for a fifth of a second (a slow blink for amount > 1), once per cycle
       return { opacity: loop(a.period ?? 4, (p) => { const c = Math.min(p / 3, 0.2 * k); return [[0, 0], [p - c - 0.08, 0], [p - c, 1], [p - 0.08, 1], [p, 0]]; }, "linear") };

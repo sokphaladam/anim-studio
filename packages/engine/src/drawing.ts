@@ -61,38 +61,45 @@ const fillCache = new WeakMap<Frame, FillResult[]>();
  * (so preview and export get the same region) and cached per frame object.
  */
 function fillsFor(frame: Frame, W: number, H: number, make: CanvasFactory): FillResult[] {
-  let res = fillCache.get(frame);
+  const res = fillCache.get(frame);
   if (res) return res;
-  res = [];
+  const fills: FillResult[] = [];
   if (frame.strokes.some((s) => s.tool === "fill")) {
-    const temp = make(W, H);
-    const g = ctxOf(temp);
+    const g = ctxOf(make(W, H));
+    // the canvas pixels, read once and kept current by the fills; a brush or eraser stroke makes them stale
+    let px: Uint8ClampedArray | null = null;
+    const mask = new Uint8Array(W * H);
     frame.strokes.forEach((s, i) => {
       if (s.tool === "fill") {
-        const r = floodFill(g, s, W, H, make);
-        res![i] = r;
+        px ??= g.getImageData(0, 0, W, H).data;
+        const r = floodFill(px, mask, s, W, H, make);
+        fills[i] = r;
         if (r) g.drawImage(r.surface as CanvasImageSource, r.x, r.y);
-      } else drawStroke(g, s, 1);
+        if (r && s.color.length === 9) px = null; // a see-through fill blends: read the result back
+      } else {
+        drawStroke(g, s, 1);
+        px = null;
+      }
     });
   }
-  fillCache.set(frame, res);
-  return res;
+  fillCache.set(frame, fills);
+  return fills;
 }
 
-function floodFill(g: Ctx2D, f: Fill, W: number, H: number, make: CanvasFactory): FillResult {
+/** Floods from `f.at` over `src` (scene pixels), writes the fill into `src`, returns it as a surface. `mask` is scratch, left clear. */
+function floodFill(src: Uint8ClampedArray, mask: Uint8Array, f: Fill, W: number, H: number, make: CanvasFactory): FillResult {
   const sx = Math.floor(f.at[0]), sy = Math.floor(f.at[1]);
   if (sx < 0 || sy < 0 || sx >= W || sy >= H) return null;
-  const src = g.getImageData(0, 0, W, H).data;
   const i0 = (sy * W + sx) * 4;
   const seed = [src[i0], src[i0 + 1], src[i0 + 2], src[i0 + 3]];
   const TOL = 48;
   const same = (p: number) => {
     const i = p * 4;
-    // transparent pixels match each other regardless of their (meaningless) color
-    if (seed[3] < 8) return src[i + 3] < 8 + TOL;
+    // transparent pixels match each other regardless of their (meaningless) color; a faint anti-aliased edge counts as
+    // transparent too, the same threshold both ways, so a click there fills the space and not every similar color
+    if (seed[3] < 8 + TOL) return src[i + 3] < 8 + TOL;
     return Math.abs(src[i] - seed[0]) <= TOL && Math.abs(src[i + 1] - seed[1]) <= TOL && Math.abs(src[i + 2] - seed[2]) <= TOL && Math.abs(src[i + 3] - seed[3]) <= TOL;
   };
-  const mask = new Uint8Array(W * H);
   const stack = [sy * W + sx];
   let minX = sx, maxX = sx, minY = sy, maxY = sy;
   while (stack.length) {
@@ -126,7 +133,9 @@ function floodFill(g: Ctx2D, f: Fill, W: number, H: number, make: CanvasFactory)
       if (!hit) continue;
       const o = ((y - y0) * w + (x - x0)) * 4;
       img.data[o] = n >> 16; img.data[o + 1] = (n >> 8) & 255; img.data[o + 2] = n & 255; img.data[o + 3] = a;
+      if (a === 255) src.set([n >> 16, (n >> 8) & 255, n & 255, 255], p * 4);
     }
+  for (let y = minY; y <= maxY; y++) mask.fill(0, y * W + minX, y * W + maxX + 1);
   og.putImageData(img, 0, 0);
   return { surface: out, x: x0, y: y0 };
 }
@@ -148,22 +157,27 @@ export function drawFrame(g: Ctx2D, frame: Frame, spec: SceneSpec, make: CanvasF
   });
 }
 
-const bboxCache = new WeakMap<object, [number, number]>();
+const bboxCache = new WeakMap<object, [number, number, number, number] | null>();
+/** What a drawing layer covers in its own coordinates, over every frame (stroke points and fill seeds); null if empty. */
+export function drawingBox(layer: Layer): [number, number, number, number] | null {
+  if (!layer.frames?.length) return null;
+  if (bboxCache.has(layer.frames)) return bboxCache.get(layer.frames)!;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const f of layer.frames)
+    for (const s of f.strokes) {
+      const pts = s.tool === "fill" ? [s.at] : s.points;
+      for (const [x, y] of pts) {
+        x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+      }
+    }
+  const b: [number, number, number, number] | null = Number.isFinite(x0) ? [x0, y0, x1, y1] : null;
+  bboxCache.set(layer.frames, b);
+  return b;
+}
+
 /** Pivot for rotate/scale: center of everything ever drawn on the layer (stable across frames). */
 export function drawingPivot(layer: Layer): [number, number] | null {
   if (!layer.frames?.length) return null;
-  let p = bboxCache.get(layer.frames);
-  if (!p) {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const f of layer.frames)
-      for (const s of f.strokes) {
-        const pts = s.tool === "fill" ? [s.at] : s.points;
-        for (const [x, y] of pts) {
-          x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
-        }
-      }
-    p = Number.isFinite(x0) ? [(x0 + x1) / 2, (y0 + y1) / 2] : [0, 0];
-    bboxCache.set(layer.frames, p);
-  }
-  return p;
+  const b = drawingBox(layer);
+  return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
 }

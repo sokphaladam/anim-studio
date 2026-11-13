@@ -141,8 +141,8 @@ export function partProblems(r: Raster, name: string): string[] {
   if (n < total * 0.002) return [`${name}: the mask is empty`];
   if (n > total * 0.97) return [`${name}: the whole image is opaque, so it is not a separated part`];
   const b = maskBox(m, r.width)!;
-  // a real subject leaves its box's corners empty; a framed picture fills it (rounded corners and all)
-  if (n > (b[2] - b[0]) * (b[3] - b[1]) * 0.93) return [`${name}: the mask is a plain rectangle, not a cut-out of the part`];
+  // a box crop fills its box (rounded-corner frames still >98%); boxy subjects like a mug fill 90-96%
+  if (n > (b[2] - b[0]) * (b[3] - b[1]) * 0.97) return [`${name}: the mask is a plain rectangle, not a cut-out of the part`];
   return [];
 }
 

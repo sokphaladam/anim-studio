@@ -238,6 +238,9 @@ describe("mask checks", () => {
     expect(partProblems(img(() => true), "head")[0]).toMatch(/whole image is opaque/);
     expect(partProblems(img((x, y) => x > 3 && x < 12 && y > 3 && y < 12), "head")[0]).toMatch(/plain rectangle/);
     expect(partProblems(img((x, y) => Math.hypot(x - 10, y - 10) < 6), "head")).toEqual([]);
+    // a mug: a box with only its top corners rounded off (~96% of its box) is still a cut-out
+    const mug = (x: number, y: number) => x >= 4 && x <= 15 && y >= 4 && y <= 15 && !(y === 4 && (x <= 5 || x >= 14)) && !(y === 5 && (x === 4 || x === 15));
+    expect(partProblems(img(mug), "cup")).toEqual([]);
   });
 
   it("resizes a mask of the same shape, and rejects empty or misaligned ones", () => {
@@ -322,6 +325,14 @@ describe("lofi loops", () => {
     for (const l of spec.layers.filter((l) => "period" in l.params)) expect(Number.isInteger(6 / (l.params.period as number))).toBe(true);
     // the blink overlay is hidden until the blink shows it
     expect(spec.layers.find((l) => l.id === "girl_head_blink")!.params.opacity).toBe(0);
+  });
+
+  it("a walker that rests at the far end swaps to a painted resting pose there, and back", async () => {
+    const plan = { ...PLAN, actions: [{ type: "walk", who: "girl", path: [[0.4, 0.95], [0.6, 0.95], [0.6, 0.5]], start: 0, end: 5, rest: 2, rest_pose: "sleeping, curled up" }] };
+    const { spec } = await run({}, [plan]);
+    expect(spec.layers.find((l) => l.id === "girl_rest")).toMatchObject({ parent: "girl" });
+    expect(spec.switches!.find((w) => w.id === "girl_pose")).toMatchObject({ options: { walking: "girl_body", resting: "girl_rest" }, keys: [[0, "walking"], [1.5, "resting"], [3.5, "walking"]] });
+    expect(spec.actions!.find((a) => a.id === "girl_walks")).toMatchObject({ type: "path", rest: 2 });
   });
 
   it("a head listed as a moving part moves the head piece instead of making a second head", async () => {

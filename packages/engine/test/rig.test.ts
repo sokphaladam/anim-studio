@@ -177,6 +177,17 @@ describe("looping actions", () => {
     expect(actionOffsets(s, "girl_head", 0.65)!.rotation).toBeGreaterThan(0);
   });
 
+  it("spin turns a full circle each cycle at an even speed; glow and flicker only dim, never brighten", () => {
+    const s = withActions([{ id: "reel", type: "spin", part: "clock", period: 3 }, { id: "dial", type: "glow", part: "girl_head" }, { id: "flame", type: "flicker", part: "girl_body" }]);
+    expect(actionOffsets(s, "clock", 1.5)!.rotation).toBeCloseTo(Math.PI, 6);
+    expect(actionOffsets(s, "clock", 0.75)!.rotation).toBeCloseTo(Math.PI / 2, 6);
+    for (let t = 0; t <= 6; t += 0.1) {
+      expect(actionOffsets(s, "girl_head", t)!.opacity).toBeLessThanOrEqual(1e-9);
+      expect(actionOffsets(s, "girl_body", t)!.opacity).toBeLessThanOrEqual(1e-9);
+    }
+    expect(actionOffsets(s, "girl_head", 1.5)!.opacity).toBeCloseTo(-0.35, 6);
+  });
+
   it("actions add up: a head can bob and look at the clock at once, on top of its own transform", () => {
     const s = withActions([{ id: "look", type: "look_at", part: "girl_head", target: "clock", start: 3, end: 5 }, { id: "nod", type: "bob", part: "girl_head", period: 1.2 }]);
     const look = evalTrack(s.tracks["look-rotation"], 5.3), nod = evalTrack(s.tracks["nod-rotation"], 5.3);
@@ -217,6 +228,18 @@ describe("looping actions", () => {
     expect(Math.min(...ys)).toBeLessThan(-1);
     expect(Math.max(...ys)).toBeLessThanOrEqual(0.01);
     expect([Math.round(o(3).x), Math.round(o(6).x)]).toEqual([300, 0]);
+  });
+
+  it("a path can jump up onto a ledge, rest there, and jump back down", () => {
+    // floor 0..1 s, jump 1..1.5, rest 1.5..4, jump down 4..4.5, floor back 4.5..5.5
+    const s = withActions([{ id: "walk", type: "path", part: "girl", start: 0, end: 5.5, rest: 2.5, points: [[0, 300], [200, 300], [200, 100]] }]);
+    const o = (t: number) => actionOffsets(s, "girl", t)!;
+    expect([Math.round(o(1.5).x), Math.round(o(1.5).y)]).toEqual([200, -200]);
+    expect([Math.round(o(3.9).x), Math.round(o(3.9).y)]).toEqual([200, -200]); // still resting
+    expect(o(1.375).y).toBeLessThan(-200); // the jump arcs above the ledge before landing
+    expect([Math.round(o(5.5).x), Math.round(o(5.5).y)]).toEqual([0, 0]);
+    // facing the way it came while resting, mirrored on the way back
+    expect([o(3).flip, o(5).flip]).toEqual([0, 1]);
   });
 
   it("swing reaches toward its target and comes back each cycle", () => {

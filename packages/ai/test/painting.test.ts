@@ -32,6 +32,17 @@ describe("single-painting prompts", () => {
     expect(p.paint.positive).not.toMatch(/night, dark|steam/);
     expect(p.paint.negative).not.toMatch(/looking at viewer/);
     expect(p.video).toMatch(/^Gentle natural motion/);
+    expect(p.video).toMatch(/no people; any animal stays where it is painted; only the named things move/);
+    expect(paintingPrompts("Night, a girl sits at a desk.").video).toMatch(/only the person and the named things move/);
+  });
+
+  it("paints the person the idea names: a man gets male focus and no girl", () => {
+    const man = paintingPrompts("Cozy lofi anime illustration, night, a young man in an oversized sweater sits at a desk.");
+    expect(man.paint.positive).toMatch(/^\(1boy:1\.4\), solo, \(male focus:1\.3\),/);
+    expect(man.paint.negative).toMatch(/1girl/);
+    const girl = paintingPrompts("Cozy lofi anime illustration, night, a girl sits at a desk.");
+    expect(girl.paint.positive).toMatch(/^1girl, solo, from side/);
+    expect(girl.paint.negative).toMatch(/1boy, male focus/);
   });
 
   it("paints and moves in the chosen style; lofi by default", () => {
@@ -43,5 +54,9 @@ describe("single-painting prompts", () => {
     expect(retro.paint.negative).toMatch(/glossy/);
     expect(retro.video).toMatch(/1990s hand-drawn cel animation style/);
     expect(paintingPrompts(IDEA, "cinematic").video).toMatch(/Cinematic anime film style/);
+    const ghibli = paintingPrompts(IDEA, "ghibli");
+    expect(ghibli.paint.positive).toMatch(/hand-painted background, watercolor/);
+    expect(ghibli.paint.negative).toMatch(/, neon, glowing/);
+    expect(paintingPrompts(IDEA, "storybook").video).toMatch(/Storybook watercolor/);
   });
 });

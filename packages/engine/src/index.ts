@@ -114,6 +114,8 @@ export function createRenderer(canvas: CanvasLike, initial: SceneSpec, opts: { c
     const idx = frameIndexAt(frames, t);
     if (idx < 0 && !options?.onion) return;
     const p = resolve(parseParams(getObject("drawing")!, l.params), spec, t) as { opacity: number; blend: keyof typeof BLENDS };
+    // actions fade drawings the way they fade pictures (a blink, a glow)
+    p.opacity += actionOffsets(spec, l.id, t, make)?.opacity ?? 0;
     if (scratch.width !== canvas.width || scratch.height !== canvas.height) scratch = make(canvas.width, canvas.height);
     const g = ctxOf(scratch);
     const full = mul(base, M);

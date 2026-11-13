@@ -25,7 +25,8 @@
     "e2e:flipbook": "node scripts/flipbook-e2e.mjs",
     "e2e:lofi": "node scripts/lofi-draw-e2e.mjs",
     "generate:layered": "npm exec -w @anim/server -- tsx src/layered-cli.ts",
-    "setup:painter": "node scripts/setup-painter.mjs",
+    "samples:styles": "npm exec -w @anim/server -- tsx src/style-samples.ts",
+    "setup:painter":"node scripts/setup-painter.mjs",
     "e2e:layered": "node scripts/layered-e2e.mjs"
   },
   "devDependencies": {

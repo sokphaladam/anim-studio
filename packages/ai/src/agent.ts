@@ -36,7 +36,7 @@ export const SceneReadSchema = z.object({
           )
           .max(2)
           .default([]),
-        motion: z.enum(["none", "sway", "drift"]).default("none"),
+        motion: z.enum(["none", "sway", "drift", "spin", "glow", "flicker"]).default("none"),
       }),
     )
     .min(1)
@@ -323,11 +323,13 @@ export async function generateAgent(req: GenerateRequest, provider: Provider, to
     const b = maskBox(all, sw)!;
     if (o.kind === "prop") {
       stage("props", `Cutting out the ${label(o.id)}`);
-      // swaying things rock about where they hang or stand: the top for hanging things, otherwise the bottom
-      const pivot = at((b[0] + b[2]) / 2, /lantern|chime|lamp|hang/i.test(o.find) ? b[1] : b[3]);
+      // swaying things rock about where they hang or stand: the top for hanging things, otherwise the bottom;
+      // spinning things turn about their middle
+      const pivot =
+        o.motion === "spin" ? at((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) : at((b[0] + b[2]) / 2, /lantern|chime|lamp|hang/i.test(o.find) ? b[1] : b[3]);
       const layer = place(o.id, src, all, {
         from: "scene_source",
-        ...(o.motion === "sway" && { pivot }),
+        ...((o.motion === "sway" || o.motion === "spin") && { pivot }),
       });
       (o.motion === "drift" ? sky : mid).push({
         ...layer,
@@ -338,7 +340,7 @@ export async function generateAgent(req: GenerateRequest, provider: Provider, to
       propBoxes.set(o.id, [x0, y0, x1, y1]);
       if (o.motion !== "none")
         actions.push({
-          id: `${o.id}_${o.motion === "sway" ? "sways" : "drifts"}`,
+          id: `${o.id}_${o.motion}s`,
           type: o.motion,
           part: o.id,
           start: 0,
@@ -473,7 +475,7 @@ export async function generateAgent(req: GenerateRequest, provider: Provider, to
             amount: 1,
           });
         }
-      }
+      } else think(`Couldn't find the ${label(o.id)}'s eyes`, ["No blink: draw closed eyes on a new layer to add one"]);
     }
     if (o.idle.includes("breathe"))
       actions.push({

@@ -1,4 +1,4 @@
-export { normalize, videoPrompt, paintingPrompts, HOLD_STILL, PAINT_SIZE, paintPrompt, LOOK, STYLES, negativeFor, type StyleId, ASPECT_SIZE, type AnimateFn, type Footage, type GenerateRequest, type Aspect } from "./generate";
+export { normalize, videoPrompt, paintingPrompts, holdStill, PAINT_SIZE, paintPrompt, LOOK, STYLES, negativeFor, type StyleId, ASPECT_SIZE, type AnimateFn, type Footage, type GenerateRequest, type Aspect } from "./generate";
 export { configFromEnv, providerFor, withFallback, type AIConfig } from "./config";
 export { ollama, ollamaHealth, ollamaPull, type PullState } from "./providers/ollama";
 export { openaiCompatible } from "./providers/openai-compatible";

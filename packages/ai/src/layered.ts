@@ -46,7 +46,7 @@ export const LayeredPlanSchema = z.object({
     .array(
       z.discriminatedUnion("type", [
         z.object({ type: z.literal("look_at"), who: Slug, target: Slug, start: z.number().min(0), end: z.number().positive(), wakes: z.boolean().default(false) }),
-        z.object({ type: z.literal("walk"), who: Slug, path: z.array(z.tuple([Frac, Frac])).min(2).max(6), start: z.number().min(0), end: z.number().positive() }),
+        z.object({ type: z.literal("walk"), who: Slug, path: z.array(z.tuple([Frac, Frac])).min(2).max(6), start: z.number().min(0), end: z.number().positive(), rest: z.number().min(0).default(0), rest_pose: z.string().min(2).optional() }),
         z.object({ type: z.literal("expression"), who: Slug, expression: z.enum([...FACES, "neutral"]), start: z.number().min(0) }),
       ]),
     )
@@ -143,7 +143,7 @@ const IDLE_WORDS = { breathe: "breathes slowly", bob: "nods gently to the music"
 export function loopShot(p: LayeredPlan, duration: number): Shot {
   const end = loopSeconds(duration);
   const who = p.characters.map((c) => [`the ${label(c.id)} ${c.idle.map((i) => IDLE_WORDS[i]).join(", ") || "stays calm and still"}`, ...c.parts.map((x) => `${x.motion === "swing" ? "lifts" : "gently moves"} the ${x.find}`)].join(" and "));
-  const acts = p.actions.flatMap((a) => (a.type === "walk" ? [`the ${label(a.who)} walks slowly with natural steps and comes back`] : a.type === "look_at" ? [`the ${label(a.who)} looks toward the ${label(a.target)}`] : []));
+  const acts = p.actions.flatMap((a) => (a.type === "walk" ? [`the ${label(a.who)} walks slowly with natural steps${a.rest > 0 ? `, rests ${a.rest} seconds,` : ""} and comes back`] : a.type === "look_at" ? [`the ${label(a.who)} looks toward the ${label(a.target)}`] : []));
   const fx = p.ambient.map((a) => ({ stars: "stars twinkle", "falling-leaves": "leaves fall gently", birds: "birds cross the sky", steam: "steam curls up", rain: "rain falls" })[a.type]);
   const motion = [...who, ...acts, ...fx, "the camera stays completely still, every object keeps its exact place, shape and size, nothing appears or disappears, calm continuous motion that could repeat forever"].join(". ");
   return { id: "loop", start: 0, end, motion };
@@ -645,6 +645,34 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
       cast.push(place(`${c.id}_irises`, src, irises, s, at, { parent: head.id, from: `${c.id}_source`, mask: `${c.id}_irises_mask`, small: true, checks: [{ name: "reconstruction", status: "pass", note: "The eye whites under them were filled from the whites around them" }] }));
     for (const o of overlays) cast.push(place(o.id, o.r, o.mask, s, at, { parent: head!.id, from: `${o.id}_fill`, mask: `${o.id}_mask`, patch: true }));
     if (eyes && head) cast.push(place(`${c.id}_head_${eyeState}`, eyes, head.mask, s, at, { parent: head.id, from: `${c.id}_head_${eyeState}_fill`, mask: `${head.id}_mask`, opacity: 0 }));
+    // a walker that rests at the far end (naps on the sill) is shown there in a second painted pose
+    const walk = plan.actions.find((a) => a.type === "walk" && a.who === c.id);
+    const restPose = walk?.type === "walk" && walk.rest > 0 ? (walk.rest_pose ?? (/sleep|asleep|nap|curled|lying|lies/i.test(c.pose) ? c.pose : undefined)) : undefined;
+    if (walk?.type === "walk" && restPose) {
+      const id = `${c.id}_rest`;
+      stage("character", `Painting the ${label(c.id)} resting`);
+      emit({ type: "asset", id, label: label(id), status: "running" });
+      const r = await paintChecked(
+        label(c.id),
+        { positive: paintPrompt(`${human ? "solo" : "no humans, animal focus, solo"}, ${look}, ${restPose}, full body, centered, ${WHITE_BG}${light}`), negative: `${NEGATIVE}, ${human ? "multiple people" : "1girl, 1boy, human"}, cropped, out of frame, ${NO_FRAME}, ${NO_SET}`, width: cw, height: ch },
+        paintedWith,
+      );
+      const rw = r.img.width, rh = r.img.height;
+      const rm = subjectOnly(maskFrom(await tools.decode(await painter.removeBackground!(r.png, signal)), rw, rh), r.found, rw, rh).mask;
+      const rb = count(rm) >= rw * rh * 0.01 ? maskBox(rm, rw) : null;
+      if (rb) {
+        save(`${id}_source`, r.img, { kind: "source" });
+        save(`${id}_mask`, maskImage(rm, rw, rh), { kind: "mask", from: `${id}_source` });
+        // as much cat as the walker (a curled pose is wider and lower), feet where the walker's are; the walk carries it
+        const rs = s * Math.sqrt(count(all) / count(rm));
+        const rat = (x: number, y: number): [number, number] => [r2(feet[0] + (x - (rb[0] + rb[2]) / 2) * rs), r2(feet[1] + (y - rb[3]) * rs)];
+        cast.push(place(id, r.img, rm, rs, rat, { parent: c.id, pivot: feet, from: `${id}_source`, mask: `${id}_mask` }));
+        // out and back are the same length, so it arrives halfway through the travel time (rest clamped as the engine does)
+        const rest = Math.min(walk.rest, (walk.end - walk.start) * 0.8), arrive = r2(walk.start + (walk.end - walk.start - rest) / 2);
+        switches.push({ id: `${c.id}_pose`, kind: "view", character: c.id, options: { walking: `${c.id}_body`, resting: id }, keys: [[0, "walking"], [arrive, "resting"], [r2(arrive + rest), "walking"]], fade: 0.15 });
+        actions.push({ id: `${id}_breathes`, type: "breathe", part: id, start: 0, ease: "inOut", amount: 1 });
+      } else emit({ type: "asset", id, label: label(id), status: "skipped", message: "The resting pose didn't separate cleanly; it rests in its walking pose" });
+    }
     if (c.idle.includes("breathe")) actions.push({ id: `${c.id}_breathes`, type: "breathe", part: `${c.id}_body`, start: 0, ease: "inOut", amount: 1 });
     if (c.idle.includes("bob") && head) actions.push({ id: `${c.id}_bobs`, type: "bob", part: head.id, start: 0, ease: "inOut", amount: 1 });
     if (eyes && eyeState === "blink") actions.push({ id: `${c.id}_blinks`, type: "blink", part: `${c.id}_head_blink`, start: 0, ease: "linear", amount: 1 });
@@ -714,7 +742,7 @@ export async function generateLayered(req: GenerateRequest, provider: Provider, 
   for (const a of plan.actions) {
     if (a.type === "expression") continue; // keyed on the face switches below
     if (a.type === "walk") {
-      actions.push({ id: `${a.who}_walks`, type: "path", part: a.who, start: a.start, end: a.end, ease: "inOut", amount: 1, points: a.path.map(([x, y]) => [r2(x * W), r2(y * H)]) });
+      actions.push({ id: `${a.who}_walks`, type: "path", part: a.who, start: a.start, end: a.end, ease: "inOut", amount: 1, points: a.path.map(([x, y]) => [r2(x * W), r2(y * H)]), ...(a.rest > 0 ? { rest: Math.min(a.rest, (a.end - a.start) * 0.8) } : {}) });
       continue;
     }
     const target = layers.some((l) => l.id === a.target) ? a.target : `${a.target}_head`;

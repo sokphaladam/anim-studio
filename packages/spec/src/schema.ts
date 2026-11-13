@@ -193,10 +193,10 @@ export const CharacterProfileSchema = z.object({
  * e.g. a cup in a hand or a cat on a branch). contact: hold an IK limb on its target from start to end.
  * motion: keyed x/y offsets a clip made (a reach's path); its tracks are its own and edited like any keys.
  */
-export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing", "gaze", "follow", "attach", "contact", "motion"] as const;
+export const ACTION_TYPES = ["look_at", "path", "breathe", "bob", "blink", "sway", "drift", "swing", "gaze", "follow", "attach", "contact", "motion", "spin", "glow", "flicker"] as const;
 /** flip: 1 mirrors the part left-right about its pivot (a walker turning around), 0 leaves it as painted. */
 export const ACTION_CHANNELS = ["x", "y", "rotation", "scale", "opacity", "flip"] as const;
-const LOOPS = new Set(["breathe", "bob", "blink", "sway", "drift", "swing", "follow"]);
+const LOOPS = new Set(["breathe", "bob", "blink", "sway", "drift", "swing", "follow", "spin", "glow", "flicker"]);
 export const isLoopAction = (type: string) => LOOPS.has(type);
 
 /**
@@ -222,6 +222,8 @@ export const ActionSchema = z.object({
   period: z.number().positive().optional(),
   /** path: where the part's pivot travels, in scene coordinates; the first point is where it rests. */
   points: z.array(z.tuple([z.number(), z.number()])).min(2).optional(),
+  /** path: seconds it stays at the last point before coming back (taken out of start..end). */
+  rest: z.number().min(0).optional(),
   /** Blend weight: scales what the action adds (0 = off; default 1 = as made). A "@track" fades it in and out. */
   weight: num.optional(),
   /** Loops: where in its cycle it starts (0–1), so a chain (a tail) can move as a wave. */
@@ -433,6 +435,7 @@ export const SceneSpecSchema = z
       if (a.type === "attach" && a.target !== undefined && under(a.target, a.part)) at("target", "A part can't be carried by something attached to it");
       if (a.type === "contact" && !s.ik?.some((k) => k.target === a.part)) at("part", `"${a.part}" is not the target of an IK chain`);
       if (a.type === "path" && !a.points) at("points", "A path needs at least 2 points");
+      if (a.rest !== undefined && a.rest >= (a.end ?? dur) - a.start) at("rest", `Rest ${a.rest}s must be shorter than the walk (${a.start}s to ${a.end ?? dur}s)`);
       if (a.end !== undefined && a.end <= a.start) at("end", `End ${a.end}s must be after start ${a.start}s`);
       if (a.end !== undefined && a.end > dur) at("end", `End ${a.end}s is past the ${dur}s duration`);
       if (a.start > dur) at("start", `Start ${a.start}s is past the ${dur}s duration`);

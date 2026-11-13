@@ -32,6 +32,35 @@ export const STYLES = {
     negative: ", glossy, digital painting, vibrant colors, bloom",
     video: "1990s hand-drawn cel animation style, muted colors, subtle film grain",
   },
+  // traditions are written as visual traits, not studio names: the tag-trained painter follows traits far better
+  anime: {
+    label: "Anime",
+    hint: "Clean modern anime illustration, no special look.",
+    positive: "anime illustration, clean lineart, vibrant colors, detailed background",
+    negative: "",
+    video: "Modern anime animation style, clean lines",
+  },
+  ghibli: {
+    label: "Ghibli-like, hand-painted",
+    hint: "Watercolor-painted backgrounds, lush nature, big cumulus clouds, warm natural light.",
+    positive: "hand-painted background, watercolor, lush greenery, fluffy cumulus clouds, warm natural light, nostalgic, 1990s anime film",
+    negative: ", neon, glowing, 3d, cgi, sharp digital shading, lens flare",
+    video: "Hand-painted anime film style, watercolor backgrounds, warm natural light, gentle breeze",
+  },
+  citypop: {
+    label: "City pop (80s poster)",
+    hint: "Airbrushed 80s poster art: neon pastels, palm trees, sunsets.",
+    positive: "1980s city pop illustration, airbrushed, pastel neon colors, sunset gradient, palm trees, retro poster art, shiny highlights",
+    negative: ", dark, gritty, muted colors, realistic",
+    video: "1980s city pop anime style, airbrushed pastel neon colors, glowing sunset",
+  },
+  storybook: {
+    label: "Storybook watercolor",
+    hint: "Soft picture-book painting: gouache and watercolor, gentle shapes, paper texture.",
+    positive: "storybook illustration, soft watercolor and gouache, painterly, gentle rounded shapes, paper texture, traditional media, pastel palette",
+    negative: ", sharp lines, 3d, neon, photorealistic, glossy",
+    video: "Storybook watercolor animation style, soft painterly textures, pastel colors",
+  },
 } as const;
 export type StyleId = keyof typeof STYLES;
 
@@ -68,7 +97,9 @@ export const videoPrompt = (motion: string, scene: string, style: StyleId = "lof
 /** What the video model is told about stillness in every loop, so the painted layout survives the motion. */
 // the person, steam, rain and lights must stay free to move ("nothing moves" froze whole clips), but slowly:
 // "visibly" made the model move everything, the sky included
-export const HOLD_STILL = "The camera stays completely still and the room and furniture keep their exact place, shape and size, nothing appears or disappears; only the person and the named things move, very slowly and subtly, small gentle movements, a calm continuous motion that could repeat forever";
+// naming "the person" in a scene without one made the model add a person; animals drifted off unless told to stay put
+export const holdStill = (person: boolean) =>
+  `The camera stays completely still and the room and furniture keep their exact place, shape and size, nothing appears or disappears${person ? "" : ", no people"}; any animal stays where it is painted; only ${person ? "the person and " : ""}the named things move, very slowly and subtly, small gentle movements, a calm continuous motion that could repeat forever`;
 const PEOPLE = { girl: /\b(girl|woman|lady)\b/i, boy: /\b(boy|man|guy)\b/i };
 // the video model only moves what is painted, and conjures what isn't (steam rising off a record player): what the motion
 // names is always tagged, even when the scene already says it ("a steaming mug" alone was left out of a busy painting)
@@ -86,7 +117,9 @@ export function paintingPrompts(prompt: string, style: StyleId = "lofi") {
   // the anime checkpoint needs a count tag, or it may paint a crowd; one person at most, as the song ideas write them
   // seen from the side, looking away, as lofi videos frame them (a front-facing stare looks frozen when animated)
   const person = PEOPLE.girl.test(scene) ? "1girl" : PEOPLE.boy.test(scene) ? "1boy" : "";
-  const who = person ? `${person}, solo, from side, looking away, ` : "no humans, scenery, ";
+  // the checkpoint leans to girls in cozy scenes: a man needs "male focus" and girls kept out, or it paints a girl anyway
+  const who = person ? `${person === "1boy" ? "(1boy:1.4), solo, (male focus:1.3)," : `${person}, solo,`} from side, looking away, ` : "no humans, scenery, ";
+  const notWho = person === "1boy" ? ", (1girl:1.3), female, breasts, skirt, long hair, makeup" : person === "1girl" ? ", 1boy, male focus" : "";
   const moving = PAINT_MOTION.filter(([re]) => re.test(motion)).map(([, tag]) => `, ${tag}`).join("");
   // the time and weather (the ideas' first clause) decide the whole light; buried mid-prompt the checkpoint ignores
   // them and paints daylight, so they go first, weighted, with the tags it knows for a dark room
@@ -99,8 +132,8 @@ export function paintingPrompts(prompt: string, style: StyleId = "lofi") {
   return {
     /** The idea has a person in it, so the painting must too (else the video model invents one mid-clip). */
     person: !!person,
-    paint: { positive: paintPrompt(`${who}${still}${moving}, detailed background, depth of field`, style), negative: `${negativeFor(style)}, multiple people, extra arms, floating objects, bad perspective, cropped${person ? ", looking at viewer, facing viewer" : ""}` },
-    video: videoPrompt(`${motion.replace(/[.\s]+$/, "") || "Gentle natural motion: breathing, blinking, hair swaying slightly, lights flickering softly"}. ${HOLD_STILL}`, scene, style),
+    paint: { positive: paintPrompt(`${who}${still}${moving}, detailed background, depth of field`, style), negative: `${negativeFor(style)}, multiple people, extra arms, floating objects, bad perspective, cropped${person ? ", looking at viewer, facing viewer" : ""}${notWho}` },
+    video: videoPrompt(`${motion.replace(/[.\s]+$/, "") || "Gentle natural motion: breathing, blinking, hair swaying slightly, lights flickering softly"}. ${holdStill(!!person)}`, scene, style),
   };
 }
 
